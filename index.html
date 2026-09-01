@@ -104,8 +104,12 @@ async function ofdRowsAllCashboxes(token, path, params) {
   return all;
 }
 
+const addDaysStr = (s, n) => { const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n); return ymd(d); };
+
 async function apiReceipts(token, from, to) {
-  const rows = await ofdRowsAllCashboxes(token, 'reports/receipts', { from, to });
+  // to у ОФД может трактоваться как невключительная граница — запрашиваем с запасом
+  // в один день и отсекаем лишнее локально
+  const rows = await ofdRowsAllCashboxes(token, 'reports/receipts', { from, to: addDaysStr(to, 1) });
   const children = new Map();
   rows.forEach(r => {
     if (r.Parent) {
@@ -114,6 +118,7 @@ async function apiReceipts(token, from, to) {
       children.set(r.Parent, arr);
     }
   });
+  const lo = new Date(from + 'T00:00:00'), hi = new Date(to + 'T23:59:59.999');
   return rows
     .filter(r => !r.Parent && r.operationType === 'Приход')
     .map(r => ({
@@ -121,17 +126,18 @@ async function apiReceipts(token, from, to) {
       cash: Number(r.cashTotalSum) || 0, ecash: Number(r.ecashTotalSum) || 0,
       items: children.get(r.Id) || []
     }))
-    .filter(r => r.date)
+    .filter(r => r.date && r.date >= lo && r.date <= hi)
     .sort((a, b) => a.date - b.date);
 }
 
 async function apiDays(token, from, to) {
-  const rows = await ofdRowsAllCashboxes(token, 'reports/shifts', { from, to });
+  const rows = await ofdRowsAllCashboxes(token, 'reports/shifts', { from, to: addDaysStr(to, 1) });
   const byDay = {};
   rows.forEach(s => {
     const raw = s.closeShiftDateTime || s.openShiftDateTime;
     if (!raw) return;
     const key = String(raw).slice(0, 10);
+    if (key < from || key > to) return;
     if (!byDay[key]) byDay[key] = { sum: 0, cnt: 0 };
     byDay[key].sum += (Number(s.incomeSum) || 0) - (Number(s.incomeReturnSum) || 0);
     byDay[key].cnt += Number(s.incomeCnt) || 0;
@@ -319,9 +325,22 @@ function App() {
     setTokens(tempTokens); setDemoMode(tempDemo); setSettingsOpen(false);
   };
 
+  // Кэш ответов: ключ «магазин|режим|от|до». Данные за прошедшие дни не меняются,
+  // поэтому живут до перезагрузки; всё, что задевает сегодняшний день — 90 секунд.
+  const cache = useRef(new Map());
+
   const loadReceipts = useCallback(async (k, from, to) => {
-    if (demoMode || !tokens[k]) return demoReceiptsRange(k, new Date(from), new Date(to), now);
-    return apiReceipts(tokens[k], from, to);
+    const key = `${k}|${demoMode ? 'demo' : 'live'}|${from}|${to}`;
+    const touchesToday = to >= ymd(now);
+    const hit = cache.current.get(key);
+    if (hit && (!touchesToday || Date.now() - hit.at < 90000)) return hit.data;
+
+    const data = (demoMode || !tokens[k])
+      ? demoReceiptsRange(k, new Date(from + 'T00:00:00'), new Date(to + 'T00:00:00'), now)
+      : await apiReceipts(tokens[k], from, to);
+
+    cache.current.set(key, { at: Date.now(), data });
+    return data;
   }, [demoMode, tokens, now]);
 
   /* ---------- загрузка экрана «Продажи» ---------- */
@@ -329,8 +348,8 @@ function App() {
   const loadSales = useCallback(async () => {
     const my = ++reqId.current;
 
-    for (const k of Object.keys(SHOPS)) {
-      if (!demoMode && !tokens[k]) { setSalesState(p => ({ ...p, [k]: { s: 'notoken' } })); continue; }
+    const loadShop = async (k) => {
+      if (!demoMode && !tokens[k]) { setSalesState(p => ({ ...p, [k]: { s: 'notoken' } })); return; }
       setSalesState(p => ({ ...p, [k]: { s: 'loading' } }));
 
       try {
@@ -339,27 +358,43 @@ function App() {
         if (dateMode === 'day') {
           from = to = pickDay;
           receipts = await loadReceipts(k, from, to);
-          const d = new Date(from + 'T00:00:00');
-          label = longDate(d);
+          label = longDate(new Date(from + 'T00:00:00'));
+
         } else if (dateMode === 'range') {
           from = rangeFrom; to = rangeTo;
-          if (new Date(from) > new Date(to)) { from = rangeTo; to = rangeFrom; }
+          if (from > to) { const t = from; from = to; to = t; }
           receipts = await loadReceipts(k, from, to);
           label = `${dmy(new Date(from + 'T00:00:00'))} — ${dmy(new Date(to + 'T00:00:00'))}`;
+
         } else {
-          // auto: сегодня, а если продаж ещё нет — последний день с продажами (до 14 дней назад)
-          for (let back = 0; back <= 14; back++) {
-            const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
-            const key = ymd(d);
-            receipts = await loadReceipts(k, key, key);
-            from = to = key;
-            if (receipts.length || back === 14) {
-              label = back === 0 ? `сегодня, ${longDate(d)}`
-                : back === 1 ? `вчера, ${longDate(d)}`
-                : `${DOW_SHORT[d.getDay()]}, ${longDate(d)}`;
-              break;
+          // Сегодня, а если продаж ещё нет — последний день с продажами.
+          // Днём это один запрос; ночью — два (вместо пятнадцати, как было раньше).
+          const today = ymd(now);
+          receipts = await loadReceipts(k, today, today);
+          let dayKey = today;
+
+          if (!receipts.length) {
+            const backFrom = addDaysStr(today, -13);
+            const recent = await loadReceipts(k, backFrom, today);
+            const byDay = new Map();
+            recent.forEach(r => {
+              const key = ymd(r.date);
+              if (!byDay.has(key)) byDay.set(key, []);
+              byDay.get(key).push(r);
+            });
+            const days = [...byDay.keys()].sort();
+            if (days.length) {
+              dayKey = days[days.length - 1];
+              receipts = byDay.get(dayKey);
             }
           }
+
+          from = to = dayKey;
+          const d = new Date(dayKey + 'T00:00:00');
+          const back = daysBetween(d, now);
+          label = back === 0 ? `сегодня, ${longDate(d)}`
+                : back === 1 ? `вчера, ${longDate(d)}`
+                : `${DOW_SHORT[d.getDay()]}, ${longDate(d)}`;
         }
 
         if (reqId.current !== my) return;
@@ -369,7 +404,10 @@ function App() {
         if (reqId.current !== my) return;
         setSalesState(p => ({ ...p, [k]: { s: 'error', msg: e.message } }));
       }
-    }
+    };
+
+    // оба магазина одновременно, а не по очереди
+    await Promise.all(Object.keys(SHOPS).map(loadShop));
   }, [dateMode, pickDay, rangeFrom, rangeTo, now, tokens, demoMode, loadReceipts]);
 
   /* ---------- загрузка недели / месяца / года ---------- */
