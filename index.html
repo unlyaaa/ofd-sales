@@ -528,7 +528,7 @@ function App() {
     return { sum, cnt, avgCheck: cnt ? sum / cnt : 0, avgUnit: active.length ? sum / active.length : 0, best: active.length ? Math.max(...active.map(b => b.value)) : 0 };
   }, [rangeState, bars]);
 
-  /* ---------- стили (плотная компоновка) ---------- */
+  /* ---------- стили ---------- */
 
   const S = {
     page: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F7F6F3' },
@@ -541,7 +541,21 @@ function App() {
       alignItems: 'center',
       justifyContent: 'space-between'
     },
-    hTitle: { fontSize: 18, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#17150F', fontWeight: 700 },
+    hTitle: {
+      fontSize: 18,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase',
+      color: '#17150F',
+      fontWeight: 700,
+      marginRight: '16px',
+      flexShrink: 0
+    },
+    topActions: {
+      display: 'flex',
+      gap: 10,
+      alignItems: 'center',
+      flexShrink: 0
+    },
     topActionBtn: {
       fontSize: 16,
       fontWeight: 500,
@@ -553,7 +567,8 @@ function App() {
       cursor: 'pointer',
       display: 'inline-flex',
       alignItems: 'center',
-      gap: 6
+      gap: 6,
+      whiteSpace: 'nowrap'
     },
     tabs: { display: 'flex', gap: 24, padding: '0 20px', borderBottom: '1px solid rgba(23,21,15,0.12)' },
     tab: { fontSize: 17, background: 'none', border: 0, color: '#6E6B62', padding: '0 0 12px', borderBottom: '3px solid transparent', cursor: 'pointer' },
@@ -966,7 +981,7 @@ function App() {
     <div style={S.page}>
       <div style={S.header}>
         <div style={S.hTitle}>Продажи{demoMode ? ' · демо' : ''}</div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={S.topActions}>
           <button style={S.topActionBtn} onClick={handleRefresh} title="Обновить данные">
             <span className={isManualRefreshing ? 'spinning' : ''} style={{ fontSize: 18, lineHeight: 1 }}>↻</span>
             <span>Обновить</span>
