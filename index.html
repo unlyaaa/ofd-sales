@@ -20,7 +20,7 @@
   input, select, button { font-family:inherit; }
   input[type="date"] {
     border:1px solid rgba(23,21,15,0.22); background:#FFFDFA; color:#17150F;
-    font-size:17px; padding:12px 14px; border-radius:2px; width:100%; outline:none;
+    font-size:16px; padding:10px 12px; border-radius:4px; width:100%; outline:none;
   }
   ::-webkit-scrollbar { display:none; }
   @keyframes spin { 100% { transform: rotate(360deg); } }
@@ -153,8 +153,8 @@ const OPEN_HOUR = 10, CLOSE_HOUR = 20;
 function hashSeed(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 function makeRng(k){let a=hashSeed(k);return()=>{a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
 const DEMO_CATALOG = {
-  shop1: [['Матовая помада',690],['Тушь для ресниц',850],['Блеск для губ',520],['Крем для лица',1290],['Мицеллярная вода',430],['Патчи для глаз',340],['Лак для ногтей',380],['Кисть для тона',640],['Сыворотка с витамином C',1150],['Пудра фиксирующая',720],['Тональный крем',1450],['Карандаш для бровей',310]],
-  shop2: [['Пряжа акрил',180],['Пряжа шерсть',340],['Спицы круговые',490],['Крючок',210],['Набор для вышивки',1150],['Мулине',60],['Фетр листовой',90],['Бисер',140],['Канва Aida 14',320],['Пяльцы деревянные',450],['Иглы для вышивания',120],['Ленты атласные',85]]
+  shop1: [['Матовая помада',690],['Тушь для ресниц',850],['Блеск для губ',520],['Крем для лица',1290],['Мицеллярная вода',430],['Патчи для глаз',340],['Лак для ногтей',380],['Кисть для тона',640],['Сыворотка',1150],['Пудра',720]],
+  shop2: [['Пряжа акрил',180],['Пряжа шерсть',340],['Спицы круговые',490],['Крючок',210],['Набор для вышивки',1150],['Мулине',60],['Фетр листовой',90],['Бисер',140],['Канва Aida',320],['Пяльцы',450]]
 };
 const DEMO_BASE = { shop1: 24, shop2: 15 };
 
@@ -236,22 +236,22 @@ function aggregate(receipts) {
    5. ГРАФИК
    ============================================================ */
 
-function Chart({ data, height = 104 }) {
+function Chart({ data, height = 90 }) {
   const [sel, setSel] = useState(null);
   useEffect(() => { setSel(null); }, [data]);
   if (!data || !data.length) return null;
   const max = Math.max(...data.map(d => d.value), 1);
   const p = sel !== null ? data[sel] : null;
   return (
-    <div style={{ marginTop: 28 }}>
-      <div style={{ minHeight: 50, marginBottom: 12 }}>
+    <div style={{ marginTop: 18 }}>
+      <div style={{ minHeight: 44, marginBottom: 8 }}>
         {p ? (
           <div>
-            <div style={{ fontSize: 24, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>{money(p.value)}</div>
-            <div style={{ fontSize: 14, color: '#6E6B62', marginTop: 4 }}>{p.label}</div>
+            <div style={{ fontSize: 22, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>{money(p.value)}</div>
+            <div style={{ fontSize: 13, color: '#6E6B62', marginTop: 2 }}>{p.label}</div>
           </div>
         ) : (
-          <div style={{ fontSize: 14, color: '#8B887E' }}>Нажмите на столбик, чтобы увидеть сумму</div>
+          <div style={{ fontSize: 13, color: '#8B887E' }}>Нажмите на столбик, чтобы увидеть сумму</div>
         )}
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: data.length > 20 ? 1 : 3, height }}>
@@ -267,7 +267,7 @@ function Chart({ data, height = 104 }) {
           </button>
         ))}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#6E6B62', marginTop: 10, fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6E6B62', marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>
         <span>{data[0].tick}</span><span>{data[data.length - 1].tick}</span>
       </div>
     </div>
@@ -283,15 +283,13 @@ function App() {
   const [screen, setScreen] = useState('sales');
   const [activeShop, setActiveShop] = useState('shop1');
 
-  // выбор периода на экране «Продажи»
-  const [dateMode, setDateMode] = useState('auto'); // auto | day | range
+  const [dateMode, setDateMode] = useState('auto');
   const [pickDay, setPickDay] = useState(ymd(new Date()));
   const [rangeFrom, setRangeFrom] = useState(ymd(new Date()));
   const [rangeTo, setRangeTo] = useState(ymd(new Date()));
   const [sortBy, setSortBy] = useState('revenue');
   const [detailShop, setDetailShop] = useState(null);
 
-  // просмотр подробной товарной аналитики в неделе/месяце/годе
   const [showRangeDetail, setShowRangeDetail] = useState(false);
   const [rangeItemsState, setRangeItemsState] = useState({ s: 'idle', agg: null });
 
@@ -313,7 +311,6 @@ function App() {
   const reqId = useRef(0);
   const cache = useRef(new Map());
 
-  // Автообновление времени
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(id); }, []);
 
   useEffect(() => {
@@ -346,8 +343,6 @@ function App() {
     cache.current.set(key, { at: Date.now(), data });
     return data;
   }, [demoMode, tokens, now]);
-
-  /* ---------- загрузка экрана «Продажи» ---------- */
 
   const loadSales = useCallback(async (force = false) => {
     const my = ++reqId.current;
@@ -400,8 +395,6 @@ function App() {
     await Promise.all(Object.keys(SHOPS).map(loadShop));
   }, [dateMode, pickDay, rangeFrom, rangeTo, now, tokens, demoMode, loadReceipts]);
 
-  /* ---------- загрузка недели / месяца / года ---------- */
-
   const range = useMemo(() => {
     if (screen === 'week') {
       const to = startOfDay(now);
@@ -432,7 +425,6 @@ function App() {
     }
   }, [screen, activeShop, tokens, demoMode, range, now]);
 
-  // Загрузка чеков для подробной товарной аналитики в Неделе/Месяце/Годе
   const loadRangeProducts = useCallback(async () => {
     const k = activeShop;
     if (!demoMode && !tokens[k]) return;
@@ -459,7 +451,6 @@ function App() {
   useEffect(() => { if (screen === 'sales') loadSales(); }, [screen, loadSales]);
   useEffect(() => { if (screen !== 'sales') loadRange(); }, [screen, loadRange]);
 
-  /* --- Обновление по кнопке и при возврате в приложение --- */
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
     cache.current.clear();
@@ -537,34 +528,60 @@ function App() {
     return { sum, cnt, avgCheck: cnt ? sum / cnt : 0, avgUnit: active.length ? sum / active.length : 0, best: active.length ? Math.max(...active.map(b => b.value)) : 0 };
   }, [rangeState, bars]);
 
-  /* ---------- стили ---------- */
+  /* ---------- стили (плотная компоновка) ---------- */
 
   const S = {
     page: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F7F6F3' },
-    header: { padding: '52px 24px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-    hTitle: { fontSize: 16, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#4A473F', fontWeight: 500 },
-    hBtn: { fontSize: 15, color: '#4A473F', background: 'none', border: 0, padding: '6px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 },
-    tabs: { display: 'flex', gap: 28, padding: '0 24px', borderBottom: '1px solid rgba(23,21,15,0.12)' },
-    tab: { fontSize: 18, background: 'none', border: 0, color: '#6E6B62', padding: '0 0 18px', borderBottom: '3px solid transparent', cursor: 'pointer' },
-    tabOn: { color: '#17150F', borderBottomColor: '#17150F', fontWeight: 500 },
-    scroll: { flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 130 },
-    block: { padding: '32px 24px 36px', borderTop: '1px solid rgba(23,21,15,0.12)' },
-    big: { fontSize: 48, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' },
-    caption: { fontSize: 15, color: '#4A473F', marginTop: 12 },
-    secTitle: { fontSize: 14, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4A473F', marginBottom: 14, fontWeight: 500 },
-    row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '19px 0', borderTop: '1px solid rgba(23,21,15,0.12)', fontSize: 17 },
+    header: {
+      paddingTop: 'max(14px, env(safe-area-inset-top))',
+      paddingBottom: '10px',
+      paddingLeft: '20px',
+      paddingRight: '20px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between'
+    },
+    hTitle: { fontSize: 18, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#17150F', fontWeight: 700 },
+    topActionBtn: {
+      fontSize: 16,
+      fontWeight: 500,
+      color: '#17150F',
+      background: 'rgba(23,21,15,0.06)',
+      border: '1px solid rgba(23,21,15,0.14)',
+      padding: '7px 14px',
+      borderRadius: 6,
+      cursor: 'pointer',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6
+    },
+    tabs: { display: 'flex', gap: 24, padding: '0 20px', borderBottom: '1px solid rgba(23,21,15,0.12)' },
+    tab: { fontSize: 17, background: 'none', border: 0, color: '#6E6B62', padding: '0 0 12px', borderBottom: '3px solid transparent', cursor: 'pointer' },
+    tabOn: { color: '#17150F', borderBottomColor: '#17150F', fontWeight: 600 },
+    scroll: { flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 20 },
+    block: { padding: '18px 20px', borderTop: '1px solid rgba(23,21,15,0.12)' },
+    big: { fontSize: 38, lineHeight: 1.05, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', fontWeight: 600 },
+    caption: { fontSize: 14, color: '#4A473F', marginTop: 4 },
+    secTitle: { fontSize: 13, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#4A473F', marginBottom: 10, fontWeight: 600 },
+    row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderTop: '1px solid rgba(23,21,15,0.12)', fontSize: 16 },
     label: { color: '#4A473F' },
     value: { fontVariantNumeric: 'tabular-nums', fontWeight: 500 },
-    sub: { fontSize: 14, color: '#6E6B62', marginTop: 4 },
-    nav: { display: 'flex', borderTop: '1px solid rgba(23,21,15,0.12)', padding: '16px 4px 32px', background: '#F2F0EB' },
-    navBtn: { flex: 1, background: 'none', border: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9, cursor: 'pointer', padding: '4px 0' },
+    sub: { fontSize: 13, color: '#6E6B62', marginTop: 2 },
+    nav: {
+      display: 'flex',
+      borderTop: '1px solid rgba(23,21,15,0.12)',
+      paddingTop: '8px',
+      paddingBottom: 'max(10px, env(safe-area-inset-bottom))',
+      background: '#F2F0EB'
+    },
+    navBtn: { flex: 1, background: 'none', border: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, cursor: 'pointer', padding: '2px 0' },
     chip: on => ({
       background: on ? '#17150F' : '#FFFDFA', color: on ? '#F7F6F3' : '#4A473F',
       border: on ? '1px solid #17150F' : '1px solid rgba(23,21,15,0.22)',
-      padding: '12px 16px', fontSize: 16, borderRadius: 2, cursor: 'pointer', whiteSpace: 'nowrap'
+      padding: '8px 14px', fontSize: 15, borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap'
     }),
-    lead: { padding: '18px 0', borderTop: '1px solid rgba(23,21,15,0.12)' },
-    fieldLabel: { fontSize: 13, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6E6B62', marginBottom: 8 }
+    lead: { padding: '12px 0', borderTop: '1px solid rgba(23,21,15,0.12)' },
+    fieldLabel: { fontSize: 13, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6E6B62', marginBottom: 6 }
   };
 
   const Tabs = () => (
@@ -576,12 +593,12 @@ function App() {
   );
 
   const Status = ({ st, retry }) => {
-    if (st.s === 'loading') return <div style={{ fontSize: 16, color: '#6E6B62', padding: '10px 0' }}>Загружаю…</div>;
-    if (st.s === 'notoken') return <div style={{ fontSize: 16, color: '#4A473F', padding: '10px 0' }}>Добавьте API-токен в настройках</div>;
+    if (st.s === 'loading') return <div style={{ fontSize: 15, color: '#6E6B62', padding: '8px 0' }}>Загружаю…</div>;
+    if (st.s === 'notoken') return <div style={{ fontSize: 15, color: '#4A473F', padding: '8px 0' }}>Добавьте API-токен в настройках</div>;
     if (st.s === 'error') return (
-      <div style={{ padding: '10px 0' }}>
-        <div style={{ fontSize: 16, color: '#17150F', lineHeight: 1.5 }}>{st.msg}</div>
-        <button onClick={retry} style={{ ...S.chip(false), marginTop: 16 }}>Повторить</button>
+      <div style={{ padding: '8px 0' }}>
+        <div style={{ fontSize: 15, color: '#17150F', lineHeight: 1.4 }}>{st.msg}</div>
+        <button onClick={retry} style={{ ...S.chip(false), marginTop: 12 }}>Повторить</button>
       </div>
     );
     return null;
@@ -589,38 +606,38 @@ function App() {
 
   const Cell = ({ label, value }) => (
     <div>
-      <div style={{ fontSize: 13, color: '#6E6B62', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 17, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{value}</div>
+      <div style={{ fontSize: 12, color: '#6E6B62', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{value}</div>
     </div>
   );
 
-  /* ---------- Компонент товарной аналитики ---------- */
+  /* ---------- Товарная аналитика ---------- */
   const ProductsSection = ({ agg, limit = 5 }) => {
     if (!agg || !agg.products || agg.products.length === 0) return null;
     const list = sortBy === 'qty' ? agg.byQty : agg.byRevenue;
     const topItems = list.slice(0, limit);
 
     return (
-      <div style={{ marginTop: 32 }}>
+      <div style={{ marginTop: 22 }}>
         {agg.topByQty && (
           <div>
             <div style={S.secTitle}>Лидеры продаж</div>
             <div style={S.lead}>
-              <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего штук</div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
-                <div style={{ fontSize: 18 }}>{agg.topByQty.name}</div>
+              <div style={{ fontSize: 13, color: '#6E6B62', marginBottom: 4 }}>Больше всего штук</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                <div style={{ fontSize: 16 }}>{agg.topByQty.name}</div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{agg.topByQty.qty} шт</div>
+                  <div style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{agg.topByQty.qty} шт</div>
                   <div style={S.sub}>{money(agg.topByQty.revenue)}</div>
                 </div>
               </div>
             </div>
             <div style={{ ...S.lead, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
-              <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего выручки</div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
-                <div style={{ fontSize: 18 }}>{agg.topByRevenue.name}</div>
+              <div style={{ fontSize: 13, color: '#6E6B62', marginBottom: 4 }}>Больше всего выручки</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                <div style={{ fontSize: 16 }}>{agg.topByRevenue.name}</div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{money(agg.topByRevenue.revenue)}</div>
+                  <div style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{money(agg.topByRevenue.revenue)}</div>
                   <div style={S.sub}>{agg.topByRevenue.qty} шт</div>
                 </div>
               </div>
@@ -628,18 +645,18 @@ function App() {
           </div>
         )}
 
-        <div style={{ marginTop: 28 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <div style={{ marginTop: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <div style={{ ...S.secTitle, marginBottom: 0 }}>Топ {limit} товаров</div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button onClick={() => setSortBy('revenue')} style={{ ...S.chip(sortBy === 'revenue'), padding: '8px 12px', fontSize: 14 }}>₽</button>
-              <button onClick={() => setSortBy('qty')} style={{ ...S.chip(sortBy === 'qty'), padding: '8px 12px', fontSize: 14 }}>шт</button>
+              <button onClick={() => setSortBy('revenue')} style={{ ...S.chip(sortBy === 'revenue'), padding: '6px 10px', fontSize: 13 }}>₽</button>
+              <button onClick={() => setSortBy('qty')} style={{ ...S.chip(sortBy === 'qty'), padding: '6px 10px', fontSize: 13 }}>шт</button>
             </div>
           </div>
           {topItems.map((p, i) => (
             <div key={i} style={S.row}>
-              <div style={{ paddingRight: 16, display: 'flex', gap: 10 }}>
-                <span style={{ color: '#8B887E', minWidth: 20 }}>{i + 1}.</span>
+              <div style={{ paddingRight: 12, display: 'flex', gap: 8, fontSize: 15 }}>
+                <span style={{ color: '#8B887E', minWidth: 18 }}>{i + 1}.</span>
                 <span>{p.name}</span>
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -653,7 +670,7 @@ function App() {
     );
   };
 
-  /* ---------- экран: ПРОДАЖИ ---------- */
+  /* ---------- Экран: ПРОДАЖИ ---------- */
 
   const buildChartBars = (st) => {
     if (!st || st.s !== 'ok') return [];
@@ -677,73 +694,75 @@ function App() {
 
   const renderSalesOverview = () => (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '14px 24px 18px', borderTop: '1px solid rgba(23,21,15,0.12)', display: 'flex', gap: 8 }}>
-        <button onClick={() => setDateMode('auto')} style={{ ...S.chip(dateMode === 'auto'), padding: '10px 14px', fontSize: 15 }}>Сегодня</button>
-        <button onClick={() => setDateMode('day')} style={{ ...S.chip(dateMode === 'day'), padding: '10px 14px', fontSize: 15 }}>Дата</button>
-        <button onClick={() => setDateMode('range')} style={{ ...S.chip(dateMode === 'range'), padding: '10px 14px', fontSize: 15 }}>Период</button>
+      <div style={{ padding: '8px 20px 10px', borderTop: '1px solid rgba(23,21,15,0.12)', display: 'flex', gap: 8 }}>
+        <button onClick={() => setDateMode('auto')} style={{ ...S.chip(dateMode === 'auto'), padding: '8px 12px', fontSize: 14 }}>Сегодня</button>
+        <button onClick={() => setDateMode('day')} style={{ ...S.chip(dateMode === 'day'), padding: '8px 12px', fontSize: 14 }}>Дата</button>
+        <button onClick={() => setDateMode('range')} style={{ ...S.chip(dateMode === 'range'), padding: '8px 12px', fontSize: 14 }}>Период</button>
       </div>
 
       {dateMode === 'day' && (
-        <div style={{ padding: '0 24px 18px' }}>
+        <div style={{ padding: '0 20px 10px' }}>
           <input type="date" value={pickDay} max={ymd(now)} onChange={e => setPickDay(e.target.value)} />
         </div>
       )}
       {dateMode === 'range' && (
-        <div style={{ padding: '0 24px 18px', display: 'flex', gap: 10 }}>
+        <div style={{ padding: '0 20px 10px', display: 'flex', gap: 8 }}>
           <input type="date" value={rangeFrom} max={ymd(now)} onChange={e => setRangeFrom(e.target.value)} />
           <input type="date" value={rangeTo} max={ymd(now)} onChange={e => setRangeTo(e.target.value)} />
         </div>
       )}
 
-      <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        {Object.keys(SHOPS).map(k => {
-          const st = salesState[k] || { s: 'idle' };
-          const d = st.agg;
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <div>
+          {Object.keys(SHOPS).map(k => {
+            const st = salesState[k] || { s: 'idle' };
+            const d = st.agg;
 
-          return (
-            <div key={k}
-              onClick={() => { if (st.s === 'ok' && d.count > 0) setDetailShop(k); }}
-              style={{
-                padding: '20px 24px 22px',
-                borderTop: '1px solid rgba(23,21,15,0.12)',
-                cursor: st.s === 'ok' && d && d.count > 0 ? 'pointer' : 'default'
-              }}>
+            return (
+              <div key={k}
+                onClick={() => { if (st.s === 'ok' && d.count > 0) setDetailShop(k); }}
+                style={{
+                  padding: '14px 20px 16px',
+                  borderTop: '1px solid rgba(23,21,15,0.12)',
+                  cursor: st.s === 'ok' && d && d.count > 0 ? 'pointer' : 'default'
+                }}>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <div style={{ fontSize: 14, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4A473F', fontWeight: 500 }}>
-                  {SHOPS[k].name}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <div style={{ fontSize: 14, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#4A473F', fontWeight: 600 }}>
+                    {SHOPS[k].name}
+                  </div>
+                  {st.s === 'ok' && d.count > 0 && (
+                    <div style={{ fontSize: 14, color: '#6E6B62', fontWeight: 500 }}>Подробнее →</div>
+                  )}
                 </div>
-                {st.s === 'ok' && d.count > 0 && (
-                  <div style={{ fontSize: 15, color: '#6E6B62' }}>Подробнее →</div>
+
+                {st.s !== 'ok' ? (
+                  <div style={{ marginTop: 6 }}><Status st={st} retry={loadSales} /></div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 34, lineHeight: 1.05, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', fontWeight: 600, marginTop: 6 }}>
+                      {money(d.total)}
+                    </div>
+                    <div style={{ fontSize: 13, color: '#4A473F', marginTop: 3 }}>{st.label}</div>
+
+                    {d.count === 0 ? (
+                      <div style={{ fontSize: 14, color: '#6E6B62', marginTop: 10 }}>продаж не было</div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', marginTop: 12 }}>
+                        <Cell label="Чеков" value={d.count} />
+                        <Cell label="Последний чек" value={hhmm(d.last)} />
+                        <Cell label="Наличные" value={money(d.cash)} />
+                        <Cell label="Карта" value={money(d.ecash)} />
+                        <Cell label="Самая большая" value={money(d.max)} />
+                        <Cell label="Средний чек" value={money(d.avg)} />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
-
-              {st.s !== 'ok' ? (
-                <div style={{ marginTop: 10 }}><Status st={st} retry={loadSales} /></div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 38, lineHeight: 1.1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', marginTop: 10 }}>
-                    {money(d.total)}
-                  </div>
-                  <div style={{ fontSize: 14, color: '#4A473F', marginTop: 6 }}>{st.label}</div>
-
-                  {d.count === 0 ? (
-                    <div style={{ fontSize: 15, color: '#6E6B62', marginTop: 14 }}>продаж не было</div>
-                  ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 16px', marginTop: 18 }}>
-                      <Cell label="Чеков" value={d.count} />
-                      <Cell label="Последний чек" value={hhmm(d.last)} />
-                      <Cell label="Наличные" value={money(d.cash)} />
-                      <Cell label="Карта" value={money(d.ecash)} />
-                      <Cell label="Самая большая" value={money(d.max)} />
-                      <Cell label="Средний чек" value={money(d.avg)} />
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -756,9 +775,9 @@ function App() {
 
     return (
       <div style={S.scroll}>
-        <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(23,21,15,0.12)' }}>
+        <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(23,21,15,0.12)' }}>
           <button onClick={() => setDetailShop(null)}
-            style={{ background: 'none', border: 0, fontSize: 16, color: '#4A473F', padding: '6px 0', cursor: 'pointer' }}>
+            style={{ background: 'none', border: 0, fontSize: 15, color: '#4A473F', padding: '4px 0', cursor: 'pointer', fontWeight: 500 }}>
             ← Назад
           </button>
         </div>
@@ -775,7 +794,7 @@ function App() {
 
               <Chart data={chartBars} />
 
-              <div style={{ marginTop: 28 }}>
+              <div style={{ marginTop: 20 }}>
                 <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(d.avg)}</span></div>
                 <div style={S.row}><span style={S.label}>Самая большая покупка</span><span style={S.value}>{money(d.max)}</span></div>
                 <div style={S.row}><span style={S.label}>Товаров продано</span><span style={S.value}>{d.unitsTotal} шт</span></div>
@@ -785,7 +804,6 @@ function App() {
                 </div>
               </div>
 
-              {/* Топ 5 в Дне */}
               <ProductsSection agg={d} limit={5} />
             </>
           )}
@@ -796,31 +814,30 @@ function App() {
 
   const renderSales = () => detailShop ? renderSalesDetail() : renderSalesOverview();
 
-  /* ---------- Общий рендер деталей товаров для Недели / Месяца / Года ---------- */
   const renderRangeProductBlock = () => {
     if (!showRangeDetail) {
       return (
         <button onClick={() => setShowRangeDetail(true)}
-          style={{ ...S.chip(false), width: '100%', marginTop: 24, textAlign: 'center', padding: '14px' }}>
+          style={{ ...S.chip(false), width: '100%', marginTop: 20, textAlign: 'center', padding: '12px', fontSize: 15, fontWeight: 500 }}>
           Подробнее по товарам (Топ {range.limit}) →
         </button>
       );
     }
 
     return (
-      <div style={{ marginTop: 28, borderTop: '1px solid rgba(23,21,15,0.12)', paddingTop: 20 }}>
+      <div style={{ marginTop: 24, borderTop: '1px solid rgba(23,21,15,0.12)', paddingTop: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontSize: 16, fontWeight: 500 }}>Товары за период</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>Товары за период</div>
           <button onClick={() => setShowRangeDetail(false)} style={{ background: 'none', border: 0, color: '#6E6B62', fontSize: 14, cursor: 'pointer' }}>Скрыть</button>
         </div>
-        {rangeItemsState.s === 'loading' && <div style={{ padding: '16px 0', color: '#6E6B62' }}>Загружаю детализацию товаров…</div>}
-        {rangeItemsState.s === 'error' && <div style={{ padding: '16px 0', color: '#17150F' }}>{rangeItemsState.msg}</div>}
+        {rangeItemsState.s === 'loading' && <div style={{ padding: '14px 0', color: '#6E6B62', fontSize: 14 }}>Загружаю детализацию товаров…</div>}
+        {rangeItemsState.s === 'error' && <div style={{ padding: '14px 0', color: '#17150F', fontSize: 14 }}>{rangeItemsState.msg}</div>}
         {rangeItemsState.s === 'ok' && <ProductsSection agg={rangeItemsState.agg} limit={range.limit} />}
       </div>
     );
   };
 
-  /* ---------- экраны: НЕДЕЛЯ / МЕСЯЦ / ГОД ---------- */
+  /* ---------- Экраны: НЕДЕЛЯ / МЕСЯЦ / ГОД ---------- */
 
   const renderWeek = () => (
     <>
@@ -832,7 +849,7 @@ function App() {
               <div style={S.big}>{money(rangeTotals.sum)}</div>
               <div style={S.caption}>{SHOPS[activeShop].name} · последние 7 дней</div>
               <Chart data={bars} />
-              <div style={{ marginTop: 28 }}>
+              <div style={{ marginTop: 20 }}>
                 <div style={S.row}><span style={S.label}>Чеков</span><span style={S.value}>{rangeTotals.cnt}</span></div>
                 <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(rangeTotals.avgCheck)}</span></div>
                 <div style={S.row}><span style={S.label}>В среднем за день</span><span style={S.value}>{money(rangeTotals.sum / 7)}</span></div>
@@ -855,11 +872,11 @@ function App() {
       <>
         <Tabs />
         <div style={S.scroll}>
-          <div style={{ ...S.block, paddingBottom: 24 }}>
-            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+          <div style={{ ...S.block, paddingBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
               {MONTHS_SHORT.map((m, i) => <button key={i} onClick={() => setMonth(i)} style={S.chip(month === i)}>{m}</button>)}
             </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
               {[0, 1, 2].map(o => { const y = new Date().getFullYear() - o; return <button key={y} onClick={() => setYear(y)} style={S.chip(year === y)}>{y}</button>; })}
             </div>
           </div>
@@ -870,7 +887,7 @@ function App() {
                 <div style={S.big}>{money(rangeTotals.sum)}</div>
                 <div style={S.caption}>{MONTHS[month]} {year} · по дням</div>
                 <Chart data={bars} />
-                <div style={{ marginTop: 28 }}>
+                <div style={{ marginTop: 20 }}>
                   <div style={S.row}><span style={S.label}>Чеков</span><span style={S.value}>{rangeTotals.cnt}</span></div>
                   <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(rangeTotals.avgCheck)}</span></div>
                   <div style={S.row}><span style={S.label}>В среднем за день</span><span style={S.value}>{money(rangeTotals.avgUnit)}</span></div>
@@ -880,12 +897,12 @@ function App() {
                 </div>
 
                 <button onClick={() => setCompare(!compare)}
-                  style={{ marginTop: 24, fontSize: 16, color: '#4A473F', background: 'none', border: 0, padding: '10px 0', cursor: 'pointer' }}>
+                  style={{ marginTop: 18, fontSize: 15, color: '#4A473F', background: 'none', border: 0, padding: '8px 0', cursor: 'pointer', fontWeight: 500 }}>
                   {compare ? '− Скрыть сравнение с прошлым годом' : '+ Сравнить с прошлым годом'}
                 </button>
 
                 {compare && (
-                  <div style={{ marginTop: 8 }}>
+                  <div style={{ marginTop: 6 }}>
                     <div style={S.row}>
                       <span style={S.label}>{MONTHS[month]} {year - 1}</span>
                       <span style={S.value}>{prevYearSum === null ? 'загружаю…' : money(prevYearSum)}</span>
@@ -910,8 +927,8 @@ function App() {
     <>
       <Tabs />
       <div style={S.scroll}>
-        <div style={{ ...S.block, paddingBottom: 24 }}>
-          <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ ...S.block, paddingBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
             {[0, 1, 2, 3].map(o => { const y = new Date().getFullYear() - o; return <button key={y} onClick={() => setChartYear(y)} style={S.chip(chartYear === y)}>{y}</button>; })}
           </div>
         </div>
@@ -921,7 +938,7 @@ function App() {
               <div style={S.big}>{money(rangeTotals.sum)}</div>
               <div style={S.caption}>{SHOPS[activeShop].name} · {chartYear} по месяцам</div>
               <Chart data={bars} />
-              <div style={{ marginTop: 28 }}>
+              <div style={{ marginTop: 20 }}>
                 <div style={S.row}><span style={S.label}>Чеков</span><span style={S.value}>{rangeTotals.cnt}</span></div>
                 <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(rangeTotals.avgCheck)}</span></div>
                 <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
@@ -949,12 +966,14 @@ function App() {
     <div style={S.page}>
       <div style={S.header}>
         <div style={S.hTitle}>Продажи{demoMode ? ' · демо' : ''}</div>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-          <button style={S.hBtn} onClick={handleRefresh} title="Обновить данные">
-            <span className={isManualRefreshing ? 'spinning' : ''} style={{ fontSize: 17 }}>↻</span>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button style={S.topActionBtn} onClick={handleRefresh} title="Обновить данные">
+            <span className={isManualRefreshing ? 'spinning' : ''} style={{ fontSize: 18, lineHeight: 1 }}>↻</span>
             <span>Обновить</span>
           </button>
-          <button style={S.hBtn} onClick={() => { setTempTokens(tokens); setTempDemo(demoMode); setSettingsOpen(true); }}>Настройки</button>
+          <button style={S.topActionBtn} onClick={() => { setTempTokens(tokens); setTempDemo(demoMode); setSettingsOpen(true); }}>
+            <span>Настройки</span>
+          </button>
         </div>
       </div>
 
@@ -969,11 +988,11 @@ function App() {
           return (
             <button key={it.id} onClick={() => { setScreen(it.id); setDetailShop(null); }} style={S.navBtn}>
               <div style={{
-                width: 14, height: 14, borderRadius: '50%',
+                width: 12, height: 12, borderRadius: '50%',
                 background: on ? '#17150F' : 'transparent',
                 border: on ? '2px solid #17150F' : '2px solid #9C998F'
               }} />
-              <div style={{ fontSize: 15, color: on ? '#17150F' : '#6E6B62', fontWeight: on ? 500 : 400 }}>{it.label}</div>
+              <div style={{ fontSize: 14, color: on ? '#17150F' : '#6E6B62', fontWeight: on ? 600 : 400 }}>{it.label}</div>
             </button>
           );
         })}
@@ -981,30 +1000,30 @@ function App() {
 
       {settingsOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(7,6,4,0.35)', display: 'flex', alignItems: 'flex-end', zIndex: 1000 }}>
-          <div style={{ background: '#F7F6F3', width: '100%', padding: '32px 24px 34px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
-              <div style={{ fontSize: 20 }}>Настройки</div>
+          <div style={{ background: '#F7F6F3', width: '100%', padding: '28px 20px 32px', maxHeight: '90vh', overflowY: 'auto', borderRadius: '12px 12px 0 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <div style={{ fontSize: 20, fontWeight: 600 }}>Настройки</div>
               <button onClick={() => setSettingsOpen(false)} style={{ background: 'none', border: 0, fontSize: 28, lineHeight: 1, color: '#4A473F', cursor: 'pointer' }}>×</button>
             </div>
 
             {Object.entries(SHOPS).map(([k, s]) => (
-              <div key={k} style={{ marginBottom: 24 }}>
+              <div key={k} style={{ marginBottom: 20 }}>
                 <div style={S.fieldLabel}>{s.name}</div>
                 <input type="password" placeholder="API-токен Яндекс ОФД" value={tempTokens[k]}
                   onChange={e => setTempTokens(p => ({ ...p, [k]: e.target.value.trim() }))}
-                  style={{ width: '100%', border: '1px solid rgba(23,21,15,0.22)', background: '#FFFDFA', fontSize: 17, padding: '12px 14px', outline: 'none', color: '#17150F', borderRadius: 2 }} />
+                  style={{ width: '100%', border: '1px solid rgba(23,21,15,0.22)', background: '#FFFDFA', fontSize: 16, padding: '12px 14px', outline: 'none', color: '#17150F', borderRadius: 4 }} />
               </div>
             ))}
 
-            <button onClick={() => setTempDemo(!tempDemo)} style={{ ...S.chip(tempDemo), width: '100%', textAlign: 'left', padding: '15px 16px', marginTop: 8 }}>
+            <button onClick={() => setTempDemo(!tempDemo)} style={{ ...S.chip(tempDemo), width: '100%', textAlign: 'left', padding: '14px 16px', marginTop: 4 }}>
               Демо-режим {tempDemo ? 'включён' : 'выключен'}
             </button>
-            <p style={{ fontSize: 14, color: '#4A473F', lineHeight: 1.6, margin: '16px 0 26px' }}>
-              Токен: личный кабинет Яндекс ОФД → Интеграции → API. Хранится только на этом устройстве.
+            <p style={{ fontSize: 13, color: '#4A473F', lineHeight: 1.5, margin: '14px 0 22px' }}>
+              Токен: личный кабинет Яндекс ОФД → Интеграции → API[cite: 1]. Хранится только на этом устройстве[cite: 2].
             </p>
 
-            <button onClick={saveSettings} style={{ width: '100%', padding: 17, background: '#17150F', color: '#F7F6F3', border: 0, fontSize: 17, cursor: 'pointer', marginBottom: 10 }}>Сохранить</button>
-            <button onClick={() => setSettingsOpen(false)} style={{ width: '100%', padding: 17, background: 'transparent', color: '#17150F', border: '1px solid rgba(23,21,15,0.22)', fontSize: 17, cursor: 'pointer' }}>Отмена</button>
+            <button onClick={saveSettings} style={{ width: '100%', padding: 15, background: '#17150F', color: '#F7F6F3', border: 0, fontSize: 16, fontWeight: 500, borderRadius: 4, cursor: 'pointer', marginBottom: 10 }}>Сохранить</button>
+            <button onClick={() => setSettingsOpen(false)} style={{ width: '100%', padding: 15, background: 'transparent', color: '#17150F', border: '1px solid rgba(23,21,15,0.22)', fontSize: 16, borderRadius: 4, cursor: 'pointer' }}>Отмена</button>
           </div>
         </div>
       )}
