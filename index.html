@@ -18,6 +18,10 @@
   }
   #root { display:flex; flex-direction:column; overflow:hidden; }
   input, select, button { font-family:inherit; }
+  input[type="date"] {
+    border:1px solid rgba(23,21,15,0.22); background:#FFFDFA; color:#17150F;
+    font-size:17px; padding:12px 14px; border-radius:2px; width:100%; outline:none;
+  }
   ::-webkit-scrollbar { display:none; }
 </style>
 </head>
@@ -46,12 +50,13 @@ const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const money = v => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(Math.round(v || 0));
 const hhmm = d => d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const dmy = d => d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+const longDate = d => d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' });
 const plural = (n, a, b, c) => { const m = n % 100; if (m >= 11 && m <= 14) return c; const k = n % 10; return k === 1 ? a : (k >= 2 && k <= 4 ? b : c); };
-// "2026-06-01 03:00:00" -> Date
 const parseOfdDate = s => s ? new Date(String(s).replace(' ', 'T')) : null;
+const daysBetween = (a, b) => Math.round((startOfDay(b) - startOfDay(a)) / 86400000);
 
 /* ============================================================
-   2. РЕАЛЬНОЕ API ЯНДЕКС ОФД (через прокси /api/ofd)
+   2. API ЯНДЕКС ОФД (через прокси /api/ofd)
    ============================================================ */
 
 async function ofd(token, path, params = {}) {
@@ -63,13 +68,12 @@ async function ofd(token, path, params = {}) {
   if (!r.ok) {
     const msg = (json && (json.error || json.message)) || `HTTP ${r.status}`;
     if (r.status === 401 || r.status === 403) throw new Error('Токен не принят ОФД. Проверьте его в настройках.');
-    if (r.status === 404) throw new Error('Прокси /api/ofd не найден. Нужно загрузить файл api/ofd.js в репозиторий.');
+    if (r.status === 404) throw new Error('Прокси /api/ofd не найден. Загрузите файл api/ofd.js в репозиторий.');
     throw new Error(msg);
   }
   return json;
 }
 
-// Постранично собирает все строки отчёта
 async function ofdRows(token, path, params) {
   const LIMIT = 1000;
   let offset = 0, all = [];
@@ -83,54 +87,60 @@ async function ofdRows(token, path, params) {
   return all;
 }
 
-// Чеки с товарными позициями за период
+const cashboxCache = new Map();
+async function apiCashboxIds(token) {
+  if (cashboxCache.has(token)) return cashboxCache.get(token);
+  const list = await ofd(token, 'cashboxes');
+  const ids = (Array.isArray(list) ? list : []).map(c => c.id).filter(v => v !== undefined && v !== null);
+  if (!ids.length) throw new Error('В этом аккаунте ОФД не найдено ни одной кассы.');
+  cashboxCache.set(token, ids);
+  return ids;
+}
+
+async function ofdRowsAllCashboxes(token, path, params) {
+  const ids = await apiCashboxIds(token);
+  let all = [];
+  for (const id of ids) all = all.concat(await ofdRows(token, path, { ...params, cashboxIds: id }));
+  return all;
+}
+
 async function apiReceipts(token, from, to) {
-  const rows = await ofdRows(token, 'reports/receipts', { from, to });
+  const rows = await ofdRowsAllCashboxes(token, 'reports/receipts', { from, to });
   const children = new Map();
   rows.forEach(r => {
     if (r.Parent) {
       const arr = children.get(r.Parent) || [];
-      arr.push({
-        name: r.itemNameFlat || 'Без названия',
-        qty: Number(r.itemQuantityFlat) || 0,
-        total: Number(r.itemSumFlat) || 0
-      });
+      arr.push({ name: r.itemNameFlat || 'Без названия', qty: Number(r.itemQuantityFlat) || 0, total: Number(r.itemSumFlat) || 0 });
       children.set(r.Parent, arr);
     }
   });
   return rows
     .filter(r => !r.Parent && r.operationType === 'Приход')
     .map(r => ({
-      id: r.Id,
-      date: parseOfdDate(r.dateTime),
-      sum: Number(r.totalSum) || 0,
-      cash: Number(r.cashTotalSum) || 0,
-      ecash: Number(r.ecashTotalSum) || 0,
+      id: r.Id, date: parseOfdDate(r.dateTime), sum: Number(r.totalSum) || 0,
+      cash: Number(r.cashTotalSum) || 0, ecash: Number(r.ecashTotalSum) || 0,
       items: children.get(r.Id) || []
     }))
     .filter(r => r.date)
     .sort((a, b) => a.date - b.date);
 }
 
-// Смены за период -> суммы по дням: { '2026-09-01': {sum, cnt} }
 async function apiDays(token, from, to) {
-  const rows = await ofdRows(token, 'reports/shifts', { from, to });
+  const rows = await ofdRowsAllCashboxes(token, 'reports/shifts', { from, to });
   const byDay = {};
   rows.forEach(s => {
     const raw = s.closeShiftDateTime || s.openShiftDateTime;
     if (!raw) return;
     const key = String(raw).slice(0, 10);
-    const sum = (Number(s.incomeSum) || 0) - (Number(s.incomeReturnSum) || 0);
-    const cnt = Number(s.incomeCnt) || 0;
     if (!byDay[key]) byDay[key] = { sum: 0, cnt: 0 };
-    byDay[key].sum += sum;
-    byDay[key].cnt += cnt;
+    byDay[key].sum += (Number(s.incomeSum) || 0) - (Number(s.incomeReturnSum) || 0);
+    byDay[key].cnt += Number(s.incomeCnt) || 0;
   });
   return byDay;
 }
 
 /* ============================================================
-   3. ДЕМО-ГЕНЕРАТОР (когда нет токена / включён демо-режим)
+   3. ДЕМО-ГЕНЕРАТОР
    ============================================================ */
 
 const OPEN_HOUR = 10, CLOSE_HOUR = 20;
@@ -158,14 +168,21 @@ function demoReceipts(shopKey, date, now) {
     const items = []; let sum = 0;
     for (let j = 0; j < n; j++) {
       const [name, price] = cat[Math.floor(rnd() * cat.length)];
-      const qty = 1 + Math.floor(rnd() * 2);
+      const qty = 1 + Math.floor(rnd() * 3);
       sum += price * qty;
       items.push({ name, qty, total: price * qty });
     }
-    out.push({ id: 'demo' + i, date: when, sum, cash: 0, ecash: sum, items });
+    out.push({ id: 'd' + i, date: when, sum, cash: 0, ecash: sum, items });
   }
   const lim = day.getTime() === today.getTime() ? out.filter(r => r.date <= now) : out;
   return lim.sort((a, b) => a.date - b.date);
+}
+
+function demoReceiptsRange(shopKey, from, to, now) {
+  let all = [];
+  const d = new Date(from);
+  while (d <= to) { all = all.concat(demoReceipts(shopKey, d, now)); d.setDate(d.getDate() + 1); }
+  return all;
 }
 
 function demoDays(shopKey, from, to, now) {
@@ -186,20 +203,26 @@ function demoDays(shopKey, from, to, now) {
 function aggregate(receipts) {
   const total = receipts.reduce((s, r) => s + r.sum, 0);
   const count = receipts.length;
-  const cash = receipts.reduce((s, r) => s + r.cash, 0);
-  const ecash = receipts.reduce((s, r) => s + r.ecash, 0);
   const pm = new Map();
   receipts.forEach(r => r.items.forEach(it => {
     const p = pm.get(it.name) || { name: it.name, qty: 0, revenue: 0 };
     p.qty += it.qty; p.revenue += it.total; pm.set(it.name, p);
   }));
+  const products = [...pm.values()];
+  const byRevenue = [...products].sort((a, b) => b.revenue - a.revenue);
+  const byQty = [...products].sort((a, b) => b.qty - a.qty);
   return {
-    total, count, cash, ecash,
+    total, count,
+    cash: receipts.reduce((s, r) => s + r.cash, 0),
+    ecash: receipts.reduce((s, r) => s + r.ecash, 0),
     avg: count ? total / count : 0,
     max: count ? Math.max(...receipts.map(r => r.sum)) : 0,
     first: count ? receipts[0].date : null,
     last: count ? receipts[count - 1].date : null,
-    products: [...pm.values()].sort((a, b) => b.revenue - a.revenue)
+    unitsTotal: products.reduce((s, p) => s + p.qty, 0),
+    products, byRevenue, byQty,
+    topByQty: byQty[0] || null,
+    topByRevenue: byRevenue[0] || null
   };
 }
 
@@ -207,7 +230,7 @@ function aggregate(receipts) {
    5. ГРАФИК
    ============================================================ */
 
-function Chart({ data, height = 96 }) {
+function Chart({ data, height = 104 }) {
   const [sel, setSel] = useState(null);
   useEffect(() => { setSel(null); }, [data]);
   if (!data || !data.length) return null;
@@ -215,14 +238,14 @@ function Chart({ data, height = 96 }) {
   const p = sel !== null ? data[sel] : null;
   return (
     <div style={{ marginTop: 28 }}>
-      <div style={{ minHeight: 46, marginBottom: 12 }}>
+      <div style={{ minHeight: 50, marginBottom: 12 }}>
         {p ? (
           <div>
-            <div style={{ fontSize: 22, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>{money(p.value)}</div>
-            <div style={{ fontSize: 13, color: '#8B887E', marginTop: 3 }}>{p.label}</div>
+            <div style={{ fontSize: 24, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>{money(p.value)}</div>
+            <div style={{ fontSize: 14, color: '#6E6B62', marginTop: 4 }}>{p.label}</div>
           </div>
         ) : (
-          <div style={{ fontSize: 13, color: '#A9A69C' }}>Нажмите на столбик, чтобы увидеть сумму</div>
+          <div style={{ fontSize: 14, color: '#8B887E' }}>Нажмите на столбик, чтобы увидеть сумму</div>
         )}
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: data.length > 20 ? 1 : 3, height }}>
@@ -232,13 +255,13 @@ function Chart({ data, height = 96 }) {
             <div style={{
               width: '100%',
               height: d.value > 0 ? Math.max(5, (d.value / max) * 100) + '%' : '2px',
-              background: sel === i ? '#17150F' : (d.value > 0 ? 'rgba(23,21,15,0.32)' : 'rgba(23,21,15,0.10)'),
+              background: sel === i ? '#17150F' : (d.value > 0 ? 'rgba(23,21,15,0.42)' : 'rgba(23,21,15,0.12)'),
               borderRadius: 2
             }} />
           </button>
         ))}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#A9A69C', marginTop: 10, fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#6E6B62', marginTop: 10, fontVariantNumeric: 'tabular-nums' }}>
         <span>{data[0].tick}</span><span>{data[data.length - 1].tick}</span>
       </div>
     </div>
@@ -251,19 +274,28 @@ function Chart({ data, height = 96 }) {
 
 function App() {
   const [now, setNow] = useState(new Date());
-  const [screen, setScreen] = useState('today');
+  const [screen, setScreen] = useState('sales');
   const [activeShop, setActiveShop] = useState('shop1');
+
+  // выбор периода на экране «Продажи»
+  const [dateMode, setDateMode] = useState('auto');       // auto | day | range
+  const [pickDay, setPickDay] = useState(ymd(new Date()));
+  const [rangeFrom, setRangeFrom] = useState(ymd(new Date()));
+  const [rangeTo, setRangeTo] = useState(ymd(new Date()));
+  const [sortBy, setSortBy] = useState('revenue');        // revenue | qty
+
   const [month, setMonth] = useState(new Date().getMonth());
   const [year, setYear] = useState(new Date().getFullYear());
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [compare, setCompare] = useState(false);
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tokens, setTokens] = useState({ shop1: '', shop2: '' });
   const [tempTokens, setTempTokens] = useState({ shop1: '', shop2: '' });
   const [demoMode, setDemoMode] = useState(false);
   const [tempDemo, setTempDemo] = useState(false);
 
-  const [todayState, setTodayState] = useState({ shop1: { s: 'idle' }, shop2: { s: 'idle' } });
+  const [salesState, setSalesState] = useState({ shop1: { s: 'idle' }, shop2: { s: 'idle' } });
   const [rangeState, setRangeState] = useState({ s: 'idle' });
   const [prevYearSum, setPrevYearSum] = useState(null);
   const reqId = useRef(0);
@@ -286,31 +318,60 @@ function App() {
     setTokens(tempTokens); setDemoMode(tempDemo); setSettingsOpen(false);
   };
 
-  const hasToken = k => !!tokens[k];
-  const live = k => !demoMode && hasToken(k);
+  const loadReceipts = useCallback(async (k, from, to) => {
+    if (demoMode || !tokens[k]) return demoReceiptsRange(k, new Date(from), new Date(to), now);
+    return apiReceipts(tokens[k], from, to);
+  }, [demoMode, tokens, now]);
 
-  /* ---------- загрузка: СЕГОДНЯ ---------- */
+  /* ---------- загрузка экрана «Продажи» ---------- */
 
-  const loadToday = useCallback(async () => {
+  const loadSales = useCallback(async () => {
     const my = ++reqId.current;
-    const day = ymd(now);
+
     for (const k of Object.keys(SHOPS)) {
-      if (!demoMode && !tokens[k]) { setTodayState(p => ({ ...p, [k]: { s: 'notoken' } })); continue; }
-      setTodayState(p => ({ ...p, [k]: { s: 'loading' } }));
+      if (!demoMode && !tokens[k]) { setSalesState(p => ({ ...p, [k]: { s: 'notoken' } })); continue; }
+      setSalesState(p => ({ ...p, [k]: { s: 'loading' } }));
+
       try {
-        const receipts = demoMode || !tokens[k]
-          ? demoReceipts(k, now, now)
-          : await apiReceipts(tokens[k], day, day);
+        let receipts = [], from, to, label;
+
+        if (dateMode === 'day') {
+          from = to = pickDay;
+          receipts = await loadReceipts(k, from, to);
+          const d = new Date(from + 'T00:00:00');
+          label = longDate(d);
+        } else if (dateMode === 'range') {
+          from = rangeFrom; to = rangeTo;
+          if (new Date(from) > new Date(to)) { from = rangeTo; to = rangeFrom; }
+          receipts = await loadReceipts(k, from, to);
+          label = `${dmy(new Date(from + 'T00:00:00'))} — ${dmy(new Date(to + 'T00:00:00'))}`;
+        } else {
+          // auto: сегодня, а если продаж ещё нет — последний день с продажами (до 14 дней назад)
+          for (let back = 0; back <= 14; back++) {
+            const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+            const key = ymd(d);
+            receipts = await loadReceipts(k, key, key);
+            from = to = key;
+            if (receipts.length || back === 14) {
+              label = back === 0 ? `сегодня, ${longDate(d)}`
+                : back === 1 ? `вчера, ${longDate(d)}`
+                : `${DOW_SHORT[d.getDay()]}, ${longDate(d)}`;
+              break;
+            }
+          }
+        }
+
         if (reqId.current !== my) return;
-        setTodayState(p => ({ ...p, [k]: { s: 'ok', receipts, agg: aggregate(receipts) } }));
+        const spanDays = daysBetween(new Date(from + 'T00:00:00'), new Date(to + 'T00:00:00')) + 1;
+        setSalesState(p => ({ ...p, [k]: { s: 'ok', receipts, agg: aggregate(receipts), label, from, to, spanDays } }));
       } catch (e) {
         if (reqId.current !== my) return;
-        setTodayState(p => ({ ...p, [k]: { s: 'error', msg: e.message } }));
+        setSalesState(p => ({ ...p, [k]: { s: 'error', msg: e.message } }));
       }
     }
-  }, [now, tokens, demoMode]);
+  }, [dateMode, pickDay, rangeFrom, rangeTo, now, tokens, demoMode, loadReceipts]);
 
-  /* ---------- загрузка: НЕДЕЛЯ / МЕСЯЦ / ГОД ---------- */
+  /* ---------- загрузка недели / месяца / года ---------- */
 
   const range = useMemo(() => {
     if (screen === 'week') {
@@ -318,14 +379,12 @@ function App() {
       const from = new Date(to); from.setDate(to.getDate() - 6);
       return { from, to, kind: 'days' };
     }
-    if (screen === 'month') {
-      return { from: new Date(year, month, 1), to: new Date(year, month + 1, 0), kind: 'days' };
-    }
+    if (screen === 'month') return { from: new Date(year, month, 1), to: new Date(year, month + 1, 0), kind: 'days' };
     return { from: new Date(chartYear, 0, 1), to: new Date(chartYear, 11, 31), kind: 'months' };
   }, [screen, now, year, month, chartYear]);
 
   const loadRange = useCallback(async () => {
-    if (screen === 'today') return;
+    if (screen === 'sales') return;
     const my = ++reqId.current;
     const k = activeShop;
     if (!demoMode && !tokens[k]) { setRangeState({ s: 'notoken' }); return; }
@@ -342,10 +401,9 @@ function App() {
     }
   }, [screen, activeShop, tokens, demoMode, range, now]);
 
-  useEffect(() => { if (screen === 'today') loadToday(); }, [screen, loadToday]);
-  useEffect(() => { if (screen !== 'today') loadRange(); }, [screen, loadRange]);
+  useEffect(() => { if (screen === 'sales') loadSales(); }, [screen, loadSales]);
+  useEffect(() => { if (screen !== 'sales') loadRange(); }, [screen, loadRange]);
 
-  // сравнение с прошлым годом
   useEffect(() => {
     if (screen !== 'month' || !compare) { setPrevYearSum(null); return; }
     let cancelled = false;
@@ -353,16 +411,12 @@ function App() {
       const k = activeShop;
       const from = new Date(year - 1, month, 1), to = new Date(year - 1, month + 1, 0);
       try {
-        const byDay = demoMode || !tokens[k]
-          ? demoDays(k, new Date(from), to, now)
-          : await apiDays(tokens[k], ymd(from), ymd(to));
+        const byDay = demoMode || !tokens[k] ? demoDays(k, new Date(from), to, now) : await apiDays(tokens[k], ymd(from), ymd(to));
         if (!cancelled) setPrevYearSum(Object.values(byDay).reduce((s, d) => s + d.sum, 0));
       } catch (e) { if (!cancelled) setPrevYearSum(null); }
     })();
     return () => { cancelled = true; };
   }, [screen, compare, activeShop, year, month, tokens, demoMode, now]);
-
-  /* ---------- столбики ---------- */
 
   const bars = useMemo(() => {
     if (rangeState.s !== 'ok') return [];
@@ -378,13 +432,10 @@ function App() {
     const out = [];
     const d = new Date(range.from);
     while (d <= range.to) {
-      const key = ymd(d);
-      const rec = byDay[key] || { sum: 0 };
+      const rec = byDay[ymd(d)] || { sum: 0 };
       out.push({
         value: rec.sum,
-        label: screen === 'week'
-          ? `${DOW_SHORT[d.getDay()]}, ${dmy(d)}`
-          : `${d.getDate()} ${MONTHS[d.getMonth()].toLowerCase()} ${d.getFullYear()}`,
+        label: screen === 'week' ? `${DOW_SHORT[d.getDay()]}, ${dmy(d)}` : `${d.getDate()} ${MONTHS[d.getMonth()].toLowerCase()} ${d.getFullYear()}`,
         tick: screen === 'week' ? DOW_SHORT[d.getDay()] : String(d.getDate())
       });
       d.setDate(d.getDate() + 1);
@@ -398,12 +449,7 @@ function App() {
     const sum = vals.reduce((s, d) => s + d.sum, 0);
     const cnt = vals.reduce((s, d) => s + d.cnt, 0);
     const active = bars.filter(b => b.value > 0);
-    return {
-      sum, cnt,
-      avgCheck: cnt ? sum / cnt : 0,
-      avgUnit: active.length ? sum / active.length : 0,
-      best: active.length ? Math.max(...active.map(b => b.value)) : 0
-    };
+    return { sum, cnt, avgCheck: cnt ? sum / cnt : 0, avgUnit: active.length ? sum / active.length : 0, best: active.length ? Math.max(...active.map(b => b.value)) : 0 };
   }, [rangeState, bars]);
 
   /* ---------- стили ---------- */
@@ -411,27 +457,29 @@ function App() {
   const S = {
     page: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F7F6F3' },
     header: { padding: '58px 24px 18px', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' },
-    hTitle: { fontSize: 15, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#8B887E' },
-    hBtn: { fontSize: 15, color: '#8B887E', background: 'none', border: 0, padding: '6px 0', cursor: 'pointer' },
-    tabs: { display: 'flex', gap: 28, padding: '0 24px', borderBottom: '1px solid rgba(23,21,15,0.09)' },
-    tab: { fontSize: 17, background: 'none', border: 0, color: '#8B887E', padding: '0 0 18px', borderBottom: '2px solid transparent', cursor: 'pointer' },
-    tabOn: { color: '#17150F', borderBottomColor: '#17150F' },
-    scroll: { flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 120 },
-    block: { padding: '32px 24px 36px', borderTop: '1px solid rgba(23,21,15,0.09)' },
-    big: { fontSize: 46, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' },
-    caption: { fontSize: 14, color: '#8B887E', marginTop: 10 },
-    secTitle: { fontSize: 13, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#8B887E', marginBottom: 12 },
-    row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 0', borderTop: '1px solid rgba(23,21,15,0.09)', fontSize: 16 },
-    label: { color: '#8B887E' },
-    value: { fontVariantNumeric: 'tabular-nums' },
-    sub: { fontSize: 13, color: '#A9A69C', marginTop: 3 },
-    nav: { display: 'flex', borderTop: '1px solid rgba(23,21,15,0.09)', padding: '14px 4px 30px' },
-    navBtn: { flex: 1, background: 'none', border: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '4px 0' },
+    hTitle: { fontSize: 16, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#4A473F', fontWeight: 500 },
+    hBtn: { fontSize: 16, color: '#4A473F', background: 'none', border: 0, padding: '6px 0', cursor: 'pointer' },
+    tabs: { display: 'flex', gap: 28, padding: '0 24px', borderBottom: '1px solid rgba(23,21,15,0.12)' },
+    tab: { fontSize: 18, background: 'none', border: 0, color: '#6E6B62', padding: '0 0 18px', borderBottom: '3px solid transparent', cursor: 'pointer' },
+    tabOn: { color: '#17150F', borderBottomColor: '#17150F', fontWeight: 500 },
+    scroll: { flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 130 },
+    block: { padding: '32px 24px 36px', borderTop: '1px solid rgba(23,21,15,0.12)' },
+    big: { fontSize: 48, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' },
+    caption: { fontSize: 15, color: '#4A473F', marginTop: 12 },
+    secTitle: { fontSize: 14, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4A473F', marginBottom: 14, fontWeight: 500 },
+    row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '19px 0', borderTop: '1px solid rgba(23,21,15,0.12)', fontSize: 17 },
+    label: { color: '#4A473F' },
+    value: { fontVariantNumeric: 'tabular-nums', fontWeight: 500 },
+    sub: { fontSize: 14, color: '#6E6B62', marginTop: 4 },
+    nav: { display: 'flex', borderTop: '1px solid rgba(23,21,15,0.12)', padding: '16px 4px 32px', background: '#F2F0EB' },
+    navBtn: { flex: 1, background: 'none', border: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9, cursor: 'pointer', padding: '4px 0' },
     chip: on => ({
-      background: on ? '#17150F' : 'transparent', color: on ? '#F7F6F3' : '#8B887E',
-      border: on ? '1px solid #17150F' : '1px solid rgba(23,21,15,0.16)',
-      padding: '10px 14px', fontSize: 15, borderRadius: 2, cursor: 'pointer', whiteSpace: 'nowrap'
-    })
+      background: on ? '#17150F' : '#FFFDFA', color: on ? '#F7F6F3' : '#4A473F',
+      border: on ? '1px solid #17150F' : '1px solid rgba(23,21,15,0.22)',
+      padding: '12px 16px', fontSize: 16, borderRadius: 2, cursor: 'pointer', whiteSpace: 'nowrap'
+    }),
+    lead: { padding: '18px 0', borderTop: '1px solid rgba(23,21,15,0.12)' },
+    fieldLabel: { fontSize: 13, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6E6B62', marginBottom: 8 }
   };
 
   const Tabs = () => (
@@ -443,41 +491,82 @@ function App() {
   );
 
   const Status = ({ st, retry }) => {
-    if (st.s === 'loading') return <div style={{ fontSize: 15, color: '#A9A69C', padding: '8px 0' }}>Загружаю…</div>;
-    if (st.s === 'notoken') return <div style={{ fontSize: 15, color: '#8B887E', padding: '8px 0' }}>Добавьте API-токен в настройках</div>;
+    if (st.s === 'loading') return <div style={{ fontSize: 16, color: '#6E6B62', padding: '10px 0' }}>Загружаю…</div>;
+    if (st.s === 'notoken') return <div style={{ fontSize: 16, color: '#4A473F', padding: '10px 0' }}>Добавьте API-токен в настройках</div>;
     if (st.s === 'error') return (
-      <div style={{ padding: '8px 0' }}>
-        <div style={{ fontSize: 15, color: '#17150F', lineHeight: 1.5 }}>{st.msg}</div>
-        <button onClick={retry} style={{ ...S.chip(false), marginTop: 14 }}>Повторить</button>
+      <div style={{ padding: '10px 0' }}>
+        <div style={{ fontSize: 16, color: '#17150F', lineHeight: 1.5 }}>{st.msg}</div>
+        <button onClick={retry} style={{ ...S.chip(false), marginTop: 16 }}>Повторить</button>
       </div>
     );
     return null;
   };
 
-  /* ---------- экран: СЕГОДНЯ ---------- */
+  /* ---------- экран: ПРОДАЖИ ---------- */
 
-  const renderToday = () => (
+  const renderSales = () => (
     <div style={S.scroll}>
+      {/* выбор периода */}
+      <div style={{ ...S.block, paddingBottom: 24 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setDateMode('auto')} style={S.chip(dateMode === 'auto')}>Сегодня</button>
+          <button onClick={() => setDateMode('day')} style={S.chip(dateMode === 'day')}>Дата</button>
+          <button onClick={() => setDateMode('range')} style={S.chip(dateMode === 'range')}>Период</button>
+        </div>
+
+        {dateMode === 'day' && (
+          <div style={{ marginTop: 20 }}>
+            <div style={S.fieldLabel}>День</div>
+            <input type="date" value={pickDay} max={ymd(now)} onChange={e => setPickDay(e.target.value)} />
+          </div>
+        )}
+
+        {dateMode === 'range' && (
+          <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={S.fieldLabel}>От</div>
+              <input type="date" value={rangeFrom} max={ymd(now)} onChange={e => setRangeFrom(e.target.value)} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={S.fieldLabel}>До</div>
+              <input type="date" value={rangeTo} max={ymd(now)} onChange={e => setRangeTo(e.target.value)} />
+            </div>
+          </div>
+        )}
+      </div>
+
       {Object.keys(SHOPS).map(k => {
-        const st = todayState[k] || { s: 'idle' };
+        const st = salesState[k] || { s: 'idle' };
         const d = st.agg;
-        const chartBars = st.s === 'ok' ? st.receipts.map(r => ({
-          value: r.sum,
-          label: `Покупка в ${hhmm(r.date)}${r.items.length ? ` · ${r.items.length} ${plural(r.items.length, 'позиция', 'позиции', 'позиций')}` : ''}`,
-          tick: hhmm(r.date)
-        })) : [];
+        let chartBars = [];
+        if (st.s === 'ok') {
+          if (st.spanDays > 1) {
+            const byDay = {};
+            st.receipts.forEach(r => { const key = ymd(r.date); byDay[key] = (byDay[key] || 0) + r.sum; });
+            const cur = new Date(st.from + 'T00:00:00'), end = new Date(st.to + 'T00:00:00');
+            while (cur <= end) {
+              chartBars.push({ value: byDay[ymd(cur)] || 0, label: `${DOW_SHORT[cur.getDay()]}, ${cur.getDate()} ${MONTHS[cur.getMonth()].toLowerCase()}`, tick: dmy(cur) });
+              cur.setDate(cur.getDate() + 1);
+            }
+          } else {
+            chartBars = st.receipts.map(r => ({
+              value: r.sum,
+              label: `Покупка в ${hhmm(r.date)}${r.items.length ? ` · ${r.items.length} ${plural(r.items.length, 'позиция', 'позиции', 'позиций')}` : ''}`,
+              tick: hhmm(r.date)
+            }));
+          }
+        }
+        const list = d ? (sortBy === 'qty' ? d.byQty : d.byRevenue) : [];
 
         return (
           <div key={k} style={S.block}>
             <div style={S.secTitle}>{SHOPS[k].name}</div>
 
-            {st.s !== 'ok' ? <Status st={st} retry={loadToday} /> : (
+            {st.s !== 'ok' ? <Status st={st} retry={loadSales} /> : (
               <>
                 <div style={S.big}>{money(d.total)}</div>
                 <div style={S.caption}>
-                  {now.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' })} · {d.count === 0
-                    ? 'продаж пока нет'
-                    : `${d.count} ${plural(d.count, 'чек', 'чека', 'чеков')} с ${hhmm(d.first)}`}
+                  {st.label} · {d.count === 0 ? 'продаж не было' : `${d.count} ${plural(d.count, 'чек', 'чека', 'чеков')}`}
                 </div>
 
                 {d.count > 0 && (
@@ -487,22 +576,57 @@ function App() {
                     <div style={{ marginTop: 28 }}>
                       <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(d.avg)}</span></div>
                       <div style={S.row}><span style={S.label}>Максимальный чек</span><span style={S.value}>{money(d.max)}</span></div>
+                      <div style={S.row}><span style={S.label}>Товаров продано</span><span style={S.value}>{d.unitsTotal} шт</span></div>
                       <div style={S.row}><span style={S.label}>Последняя продажа</span><span style={S.value}>{hhmm(d.last)}</span></div>
-                      <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.09)' }}>
+                      <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
                         <span style={S.label}>Наличные / карта</span>
                         <span style={S.value}>{money(d.cash)} / {money(d.ecash)}</span>
                       </div>
                     </div>
 
-                    {d.products.length > 0 && (
+                    {d.topByQty && (
                       <div style={{ marginTop: 32 }}>
-                        <div style={S.secTitle}>Топ товаров</div>
-                        {d.products.slice(0, 7).map((p, i) => (
+                        <div style={S.secTitle}>Лидеры</div>
+
+                        <div style={S.lead}>
+                          <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего штук</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
+                            <div style={{ fontSize: 18 }}>{d.topByQty.name}</div>
+                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                              <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{d.topByQty.qty} шт</div>
+                              <div style={S.sub}>{money(d.topByQty.revenue)}</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ ...S.lead, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
+                          <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего выручки</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
+                            <div style={{ fontSize: 18 }}>{d.topByRevenue.name}</div>
+                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                              <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{money(d.topByRevenue.revenue)}</div>
+                              <div style={S.sub}>{d.topByRevenue.qty} шт</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {list.length > 0 && (
+                      <div style={{ marginTop: 32 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                          <div style={{ ...S.secTitle, marginBottom: 0 }}>Все товары</div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button onClick={() => setSortBy('revenue')} style={{ ...S.chip(sortBy === 'revenue'), padding: '8px 12px', fontSize: 14 }}>₽</button>
+                            <button onClick={() => setSortBy('qty')} style={{ ...S.chip(sortBy === 'qty'), padding: '8px 12px', fontSize: 14 }}>шт</button>
+                          </div>
+                        </div>
+                        {list.slice(0, 10).map((p, i) => (
                           <div key={i} style={S.row}>
                             <div style={{ paddingRight: 16 }}>{p.name}</div>
                             <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                              <div style={S.value}>{money(p.revenue)}</div>
-                              <div style={S.sub}>{p.qty} шт</div>
+                              <div style={S.value}>{sortBy === 'qty' ? `${p.qty} шт` : money(p.revenue)}</div>
+                              <div style={S.sub}>{sortBy === 'qty' ? money(p.revenue) : `${p.qty} шт`}</div>
                             </div>
                           </div>
                         ))}
@@ -518,7 +642,7 @@ function App() {
     </div>
   );
 
-  /* ---------- экран: НЕДЕЛЯ ---------- */
+  /* ---------- экраны: НЕДЕЛЯ / МЕСЯЦ / ГОД ---------- */
 
   const renderWeek = () => (
     <>
@@ -534,7 +658,7 @@ function App() {
                 <div style={S.row}><span style={S.label}>Чеков</span><span style={S.value}>{rangeTotals.cnt}</span></div>
                 <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(rangeTotals.avgCheck)}</span></div>
                 <div style={S.row}><span style={S.label}>В среднем за день</span><span style={S.value}>{money(rangeTotals.sum / 7)}</span></div>
-                <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.09)' }}>
+                <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
                   <span style={S.label}>Лучший день</span><span style={S.value}>{money(rangeTotals.best)}</span>
                 </div>
               </div>
@@ -544,8 +668,6 @@ function App() {
       </div>
     </>
   );
-
-  /* ---------- экран: МЕСЯЦ ---------- */
 
   const renderMonth = () => {
     const delta = (rangeTotals && prevYearSum > 0) ? ((rangeTotals.sum - prevYearSum) / prevYearSum) * 100 : null;
@@ -572,13 +694,13 @@ function App() {
                   <div style={S.row}><span style={S.label}>Чеков</span><span style={S.value}>{rangeTotals.cnt}</span></div>
                   <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(rangeTotals.avgCheck)}</span></div>
                   <div style={S.row}><span style={S.label}>В среднем за день</span><span style={S.value}>{money(rangeTotals.avgUnit)}</span></div>
-                  <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.09)' }}>
+                  <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
                     <span style={S.label}>Лучший день</span><span style={S.value}>{money(rangeTotals.best)}</span>
                   </div>
                 </div>
 
                 <button onClick={() => setCompare(!compare)}
-                  style={{ marginTop: 24, fontSize: 15, color: '#8B887E', background: 'none', border: 0, padding: '8px 0', cursor: 'pointer' }}>
+                  style={{ marginTop: 24, fontSize: 16, color: '#4A473F', background: 'none', border: 0, padding: '10px 0', cursor: 'pointer' }}>
                   {compare ? '− Скрыть сравнение с прошлым годом' : '+ Сравнить с прошлым годом'}
                 </button>
 
@@ -588,7 +710,7 @@ function App() {
                       <span style={S.label}>{MONTHS[month]} {year - 1}</span>
                       <span style={S.value}>{prevYearSum === null ? 'загружаю…' : money(prevYearSum)}</span>
                     </div>
-                    <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.09)' }}>
+                    <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
                       <span style={S.label}>Динамика</span>
                       <span style={S.value}>{delta === null ? '—' : (delta >= 0 ? '+' : '') + delta.toFixed(1) + '%'}</span>
                     </div>
@@ -601,8 +723,6 @@ function App() {
       </>
     );
   };
-
-  /* ---------- экран: ГОД ---------- */
 
   const renderYear = () => (
     <>
@@ -622,7 +742,7 @@ function App() {
               <div style={{ marginTop: 28 }}>
                 <div style={S.row}><span style={S.label}>Чеков</span><span style={S.value}>{rangeTotals.cnt}</span></div>
                 <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(rangeTotals.avgCheck)}</span></div>
-                <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.09)' }}>
+                <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
                   <span style={S.label}>Лучший месяц</span>
                   <span style={S.value}>{money(Math.max(0, ...bars.map(b => b.value)))}</span>
                 </div>
@@ -637,7 +757,7 @@ function App() {
   /* ---------- рендер ---------- */
 
   const NAV = [
-    { id: 'today', label: 'Сегодня' },
+    { id: 'sales', label: 'Продажи' },
     { id: 'week', label: 'Неделя' },
     { id: 'month', label: 'Месяц' },
     { id: 'year', label: 'Год' }
@@ -650,7 +770,7 @@ function App() {
         <button style={S.hBtn} onClick={() => { setTempTokens(tokens); setTempDemo(demoMode); setSettingsOpen(true); }}>Настройки</button>
       </div>
 
-      {screen === 'today' && renderToday()}
+      {screen === 'sales' && renderSales()}
       {screen === 'week' && renderWeek()}
       {screen === 'month' && renderMonth()}
       {screen === 'year' && renderYear()}
@@ -660,41 +780,44 @@ function App() {
           const on = screen === it.id;
           return (
             <button key={it.id} onClick={() => setScreen(it.id)} style={S.navBtn}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: on ? '#17150F' : '#C4C1B8' }} />
-              <div style={{ fontSize: 13, color: on ? '#17150F' : '#A9A69C' }}>{it.label}</div>
+              <div style={{
+                width: 14, height: 14, borderRadius: '50%',
+                background: on ? '#17150F' : 'transparent',
+                border: on ? '2px solid #17150F' : '2px solid #9C998F'
+              }} />
+              <div style={{ fontSize: 15, color: on ? '#17150F' : '#6E6B62', fontWeight: on ? 500 : 400 }}>{it.label}</div>
             </button>
           );
         })}
       </div>
 
       {settingsOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(7,6,4,0.32)', display: 'flex', alignItems: 'flex-end', zIndex: 1000 }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(7,6,4,0.35)', display: 'flex', alignItems: 'flex-end', zIndex: 1000 }}>
           <div style={{ background: '#F7F6F3', width: '100%', padding: '32px 24px 34px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
-              <div style={{ fontSize: 18 }}>Настройки</div>
-              <button onClick={() => setSettingsOpen(false)} style={{ background: 'none', border: 0, fontSize: 26, lineHeight: 1, color: '#8B887E', cursor: 'pointer' }}>×</button>
+              <div style={{ fontSize: 20 }}>Настройки</div>
+              <button onClick={() => setSettingsOpen(false)} style={{ background: 'none', border: 0, fontSize: 28, lineHeight: 1, color: '#4A473F', cursor: 'pointer' }}>×</button>
             </div>
 
             {Object.entries(SHOPS).map(([k, s]) => (
               <div key={k} style={{ marginBottom: 24 }}>
-                <div style={{ fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#8B887E', marginBottom: 10 }}>{s.name}</div>
+                <div style={S.fieldLabel}>{s.name}</div>
                 <input type="password" placeholder="API-токен Яндекс ОФД" value={tempTokens[k]}
                   onChange={e => setTempTokens(p => ({ ...p, [k]: e.target.value.trim() }))}
-                  style={{ width: '100%', border: 0, borderBottom: '1px solid rgba(23,21,15,0.2)', background: 'transparent', fontSize: 16, padding: '0 0 10px', outline: 'none', color: '#17150F' }} />
+                  style={{ width: '100%', border: '1px solid rgba(23,21,15,0.22)', background: '#FFFDFA', fontSize: 17, padding: '12px 14px', outline: 'none', color: '#17150F', borderRadius: 2 }} />
               </div>
             ))}
 
-            <button onClick={() => setTempDemo(!tempDemo)}
-              style={{ ...S.chip(tempDemo), width: '100%', textAlign: 'left', padding: '14px 16px', marginTop: 8 }}>
+            <button onClick={() => setTempDemo(!tempDemo)} style={{ ...S.chip(tempDemo), width: '100%', textAlign: 'left', padding: '15px 16px', marginTop: 8 }}>
               Демо-режим {tempDemo ? 'включён' : 'выключен'}
             </button>
-            <p style={{ fontSize: 13, color: '#8B887E', lineHeight: 1.6, margin: '14px 0 24px' }}>
+            <p style={{ fontSize: 14, color: '#4A473F', lineHeight: 1.6, margin: '16px 0 26px' }}>
               Токен: личный кабинет Яндекс ОФД → Интеграции → API. Хранится только на этом телефоне.
               В демо-режиме показываются выдуманные цифры — для проверки внешнего вида.
             </p>
 
-            <button onClick={saveSettings} style={{ width: '100%', padding: 16, background: '#17150F', color: '#F7F6F3', border: 0, fontSize: 16, cursor: 'pointer', marginBottom: 10 }}>Сохранить</button>
-            <button onClick={() => setSettingsOpen(false)} style={{ width: '100%', padding: 16, background: 'transparent', color: '#17150F', border: '1px solid rgba(23,21,15,0.2)', fontSize: 16, cursor: 'pointer' }}>Отмена</button>
+            <button onClick={saveSettings} style={{ width: '100%', padding: 17, background: '#17150F', color: '#F7F6F3', border: 0, fontSize: 17, cursor: 'pointer', marginBottom: 10 }}>Сохранить</button>
+            <button onClick={() => setSettingsOpen(false)} style={{ width: '100%', padding: 17, background: 'transparent', color: '#17150F', border: '1px solid rgba(23,21,15,0.22)', fontSize: 17, cursor: 'pointer' }}>Отмена</button>
           </div>
         </div>
       )}
