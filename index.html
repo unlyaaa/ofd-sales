@@ -23,6 +23,8 @@
     font-size:17px; padding:12px 14px; border-radius:2px; width:100%; outline:none;
   }
   ::-webkit-scrollbar { display:none; }
+  @keyframes spin { 100% { transform: rotate(360deg); } }
+  .spinning { display: inline-block; animation: spin 0.8s linear infinite; }
 </style>
 </head>
 <body>
@@ -56,7 +58,7 @@ const parseOfdDate = s => s ? new Date(String(s).replace(' ', 'T')) : null;
 const daysBetween = (a, b) => Math.round((startOfDay(b) - startOfDay(a)) / 86400000);
 
 /* ============================================================
-   2. API ЯНДЕКС ОФД (через прокси /api/ofd)
+   2. API ЯНДЕКС ОФД
    ============================================================ */
 
 async function ofd(token, path, params = {}) {
@@ -77,7 +79,7 @@ async function ofd(token, path, params = {}) {
 async function ofdRows(token, path, params) {
   const LIMIT = 1000;
   let offset = 0, all = [];
-  for (let page = 0; page < 12; page++) {
+  for (let page = 0; page < 15; page++) {
     const json = await ofd(token, path, { ...params, limit: LIMIT, offset });
     const rows = (json && json.data && json.data.rows) || [];
     all = all.concat(rows);
@@ -107,8 +109,6 @@ async function ofdRowsAllCashboxes(token, path, params) {
 const addDaysStr = (s, n) => { const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n); return ymd(d); };
 
 async function apiReceipts(token, from, to) {
-  // to у ОФД может трактоваться как невключительная граница — запрашиваем с запасом
-  // в один день и отсекаем лишнее локально
   const rows = await ofdRowsAllCashboxes(token, 'reports/receipts', { from, to: addDaysStr(to, 1) });
   const children = new Map();
   rows.forEach(r => {
@@ -153,8 +153,8 @@ const OPEN_HOUR = 10, CLOSE_HOUR = 20;
 function hashSeed(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 function makeRng(k){let a=hashSeed(k);return()=>{a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
 const DEMO_CATALOG = {
-  shop1: [['Матовая помада',690],['Тушь для ресниц',850],['Блеск для губ',520],['Крем для лица',1290],['Мицеллярная вода',430],['Патчи для глаз',340],['Лак для ногтей',380],['Кисть для тона',640]],
-  shop2: [['Пряжа акрил',180],['Пряжа шерсть',340],['Спицы круговые',490],['Крючок',210],['Набор для вышивки',1150],['Мулине',60],['Фетр листовой',90],['Бисер',140]]
+  shop1: [['Матовая помада',690],['Тушь для ресниц',850],['Блеск для губ',520],['Крем для лица',1290],['Мицеллярная вода',430],['Патчи для глаз',340],['Лак для ногтей',380],['Кисть для тона',640],['Сыворотка с витамином C',1150],['Пудра фиксирующая',720],['Тональный крем',1450],['Карандаш для бровей',310]],
+  shop2: [['Пряжа акрил',180],['Пряжа шерсть',340],['Спицы круговые',490],['Крючок',210],['Набор для вышивки',1150],['Мулине',60],['Фетр листовой',90],['Бисер',140],['Канва Aida 14',320],['Пяльцы деревянные',450],['Иглы для вышивания',120],['Ленты атласные',85]]
 };
 const DEMO_BASE = { shop1: 24, shop2: 15 };
 
@@ -203,7 +203,7 @@ function demoDays(shopKey, from, to, now) {
 }
 
 /* ============================================================
-   4. АГРЕГАЦИЯ
+   4. АГРЕГАЦИЯ ТОВАРОВ И ПРОДАЖ
    ============================================================ */
 
 function aggregate(receipts) {
@@ -284,12 +284,16 @@ function App() {
   const [activeShop, setActiveShop] = useState('shop1');
 
   // выбор периода на экране «Продажи»
-  const [dateMode, setDateMode] = useState('auto');       // auto | day | range
+  const [dateMode, setDateMode] = useState('auto'); // auto | day | range
   const [pickDay, setPickDay] = useState(ymd(new Date()));
   const [rangeFrom, setRangeFrom] = useState(ymd(new Date()));
   const [rangeTo, setRangeTo] = useState(ymd(new Date()));
-  const [sortBy, setSortBy] = useState('revenue');        // revenue | qty
-  const [detailShop, setDetailShop] = useState(null);     // null | shop1 | shop2
+  const [sortBy, setSortBy] = useState('revenue');
+  const [detailShop, setDetailShop] = useState(null);
+
+  // просмотр подробной товарной аналитики в неделе/месяце/годе
+  const [showRangeDetail, setShowRangeDetail] = useState(false);
+  const [rangeItemsState, setRangeItemsState] = useState({ s: 'idle', agg: null });
 
   const [month, setMonth] = useState(new Date().getMonth());
   const [year, setYear] = useState(new Date().getFullYear());
@@ -301,12 +305,15 @@ function App() {
   const [tempTokens, setTempTokens] = useState({ shop1: '', shop2: '' });
   const [demoMode, setDemoMode] = useState(false);
   const [tempDemo, setTempDemo] = useState(false);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
   const [salesState, setSalesState] = useState({ shop1: { s: 'idle' }, shop2: { s: 'idle' } });
   const [rangeState, setRangeState] = useState({ s: 'idle' });
   const [prevYearSum, setPrevYearSum] = useState(null);
   const reqId = useRef(0);
+  const cache = useRef(new Map());
 
+  // Автообновление времени
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(id); }, []);
 
   useEffect(() => {
@@ -323,17 +330,14 @@ function App() {
     localStorage.setItem('ofdTokens', JSON.stringify(tempTokens));
     localStorage.setItem('ofdDemo', tempDemo ? '1' : '0');
     setTokens(tempTokens); setDemoMode(tempDemo); setSettingsOpen(false);
+    cache.current.clear();
   };
 
-  // Кэш ответов: ключ «магазин|режим|от|до». Данные за прошедшие дни не меняются,
-  // поэтому живут до перезагрузки; всё, что задевает сегодняшний день — 90 секунд.
-  const cache = useRef(new Map());
-
-  const loadReceipts = useCallback(async (k, from, to) => {
+  const loadReceipts = useCallback(async (k, from, to, force = false) => {
     const key = `${k}|${demoMode ? 'demo' : 'live'}|${from}|${to}`;
     const touchesToday = to >= ymd(now);
     const hit = cache.current.get(key);
-    if (hit && (!touchesToday || Date.now() - hit.at < 90000)) return hit.data;
+    if (!force && hit && (!touchesToday || Date.now() - hit.at < 90000)) return hit.data;
 
     const data = (demoMode || !tokens[k])
       ? demoReceiptsRange(k, new Date(from + 'T00:00:00'), new Date(to + 'T00:00:00'), now)
@@ -345,37 +349,29 @@ function App() {
 
   /* ---------- загрузка экрана «Продажи» ---------- */
 
-  const loadSales = useCallback(async () => {
+  const loadSales = useCallback(async (force = false) => {
     const my = ++reqId.current;
-
     const loadShop = async (k) => {
       if (!demoMode && !tokens[k]) { setSalesState(p => ({ ...p, [k]: { s: 'notoken' } })); return; }
       setSalesState(p => ({ ...p, [k]: { s: 'loading' } }));
-
       try {
         let receipts = [], from, to, label;
-
         if (dateMode === 'day') {
           from = to = pickDay;
-          receipts = await loadReceipts(k, from, to);
+          receipts = await loadReceipts(k, from, to, force);
           label = longDate(new Date(from + 'T00:00:00'));
-
         } else if (dateMode === 'range') {
           from = rangeFrom; to = rangeTo;
           if (from > to) { const t = from; from = to; to = t; }
-          receipts = await loadReceipts(k, from, to);
+          receipts = await loadReceipts(k, from, to, force);
           label = `${dmy(new Date(from + 'T00:00:00'))} — ${dmy(new Date(to + 'T00:00:00'))}`;
-
         } else {
-          // Сегодня, а если продаж ещё нет — последний день с продажами.
-          // Днём это один запрос; ночью — два (вместо пятнадцати, как было раньше).
           const today = ymd(now);
-          receipts = await loadReceipts(k, today, today);
+          receipts = await loadReceipts(k, today, today, force);
           let dayKey = today;
-
           if (!receipts.length) {
             const backFrom = addDaysStr(today, -13);
-            const recent = await loadReceipts(k, backFrom, today);
+            const recent = await loadReceipts(k, backFrom, today, force);
             const byDay = new Map();
             recent.forEach(r => {
               const key = ymd(r.date);
@@ -388,15 +384,11 @@ function App() {
               receipts = byDay.get(dayKey);
             }
           }
-
           from = to = dayKey;
           const d = new Date(dayKey + 'T00:00:00');
           const back = daysBetween(d, now);
-          label = back === 0 ? `сегодня, ${longDate(d)}`
-                : back === 1 ? `вчера, ${longDate(d)}`
-                : `${DOW_SHORT[d.getDay()]}, ${longDate(d)}`;
+          label = back === 0 ? `сегодня, ${longDate(d)}` : back === 1 ? `вчера, ${longDate(d)}` : `${DOW_SHORT[d.getDay()]}, ${longDate(d)}`;
         }
-
         if (reqId.current !== my) return;
         const spanDays = daysBetween(new Date(from + 'T00:00:00'), new Date(to + 'T00:00:00')) + 1;
         setSalesState(p => ({ ...p, [k]: { s: 'ok', receipts, agg: aggregate(receipts), label, from, to, spanDays } }));
@@ -405,8 +397,6 @@ function App() {
         setSalesState(p => ({ ...p, [k]: { s: 'error', msg: e.message } }));
       }
     };
-
-    // оба магазина одновременно, а не по очереди
     await Promise.all(Object.keys(SHOPS).map(loadShop));
   }, [dateMode, pickDay, rangeFrom, rangeTo, now, tokens, demoMode, loadReceipts]);
 
@@ -416,10 +406,12 @@ function App() {
     if (screen === 'week') {
       const to = startOfDay(now);
       const from = new Date(to); from.setDate(to.getDate() - 6);
-      return { from, to, kind: 'days' };
+      return { from, to, kind: 'days', title: 'последние 7 дней', limit: 10 };
     }
-    if (screen === 'month') return { from: new Date(year, month, 1), to: new Date(year, month + 1, 0), kind: 'days' };
-    return { from: new Date(chartYear, 0, 1), to: new Date(chartYear, 11, 31), kind: 'months' };
+    if (screen === 'month') {
+      return { from: new Date(year, month, 1), to: new Date(year, month + 1, 0), kind: 'days', title: `${MONTHS[month]} ${year}`, limit: 20 };
+    }
+    return { from: new Date(chartYear, 0, 1), to: new Date(chartYear, 11, 31), kind: 'months', title: `${chartYear} год`, limit: 50 };
   }, [screen, now, year, month, chartYear]);
 
   const loadRange = useCallback(async () => {
@@ -440,8 +432,62 @@ function App() {
     }
   }, [screen, activeShop, tokens, demoMode, range, now]);
 
+  // Загрузка чеков для подробной товарной аналитики в Неделе/Месяце/Годе
+  const loadRangeProducts = useCallback(async () => {
+    const k = activeShop;
+    if (!demoMode && !tokens[k]) return;
+    setRangeItemsState({ s: 'loading', agg: null });
+    try {
+      const receipts = await loadReceipts(k, ymd(range.from), ymd(range.to));
+      setRangeItemsState({ s: 'ok', agg: aggregate(receipts) });
+    } catch (e) {
+      setRangeItemsState({ s: 'error', msg: e.message, agg: null });
+    }
+  }, [activeShop, demoMode, tokens, range, loadReceipts]);
+
+  useEffect(() => {
+    setShowRangeDetail(false);
+    setRangeItemsState({ s: 'idle', agg: null });
+  }, [screen, activeShop, month, year, chartYear]);
+
+  useEffect(() => {
+    if (showRangeDetail && rangeItemsState.s === 'idle') {
+      loadRangeProducts();
+    }
+  }, [showRangeDetail, rangeItemsState.s, loadRangeProducts]);
+
   useEffect(() => { if (screen === 'sales') loadSales(); }, [screen, loadSales]);
   useEffect(() => { if (screen !== 'sales') loadRange(); }, [screen, loadRange]);
+
+  /* --- Обновление по кнопке и при возврате в приложение --- */
+  const handleRefresh = useCallback(async () => {
+    setIsManualRefreshing(true);
+    cache.current.clear();
+    setNow(new Date());
+    if (screen === 'sales') {
+      await loadSales(true);
+    } else {
+      await loadRange();
+      if (showRangeDetail) await loadRangeProducts();
+    }
+    setTimeout(() => setIsManualRefreshing(false), 500);
+  }, [screen, loadSales, loadRange, showRangeDetail, loadRangeProducts]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      setNow(new Date());
+      if (screen === 'sales') loadSales();
+      else loadRange();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') onFocus();
+    });
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [screen, loadSales, loadRange]);
 
   useEffect(() => {
     if (screen !== 'month' || !compare) { setPrevYearSum(null); return; }
@@ -495,9 +541,9 @@ function App() {
 
   const S = {
     page: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F7F6F3' },
-    header: { padding: '58px 24px 18px', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' },
+    header: { padding: '52px 24px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
     hTitle: { fontSize: 16, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#4A473F', fontWeight: 500 },
-    hBtn: { fontSize: 16, color: '#4A473F', background: 'none', border: 0, padding: '6px 0', cursor: 'pointer' },
+    hBtn: { fontSize: 15, color: '#4A473F', background: 'none', border: 0, padding: '6px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 },
     tabs: { display: 'flex', gap: 28, padding: '0 24px', borderBottom: '1px solid rgba(23,21,15,0.12)' },
     tab: { fontSize: 18, background: 'none', border: 0, color: '#6E6B62', padding: '0 0 18px', borderBottom: '3px solid transparent', cursor: 'pointer' },
     tabOn: { color: '#17150F', borderBottomColor: '#17150F', fontWeight: 500 },
@@ -541,6 +587,72 @@ function App() {
     return null;
   };
 
+  const Cell = ({ label, value }) => (
+    <div>
+      <div style={{ fontSize: 13, color: '#6E6B62', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 17, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{value}</div>
+    </div>
+  );
+
+  /* ---------- Компонент товарной аналитики ---------- */
+  const ProductsSection = ({ agg, limit = 5 }) => {
+    if (!agg || !agg.products || agg.products.length === 0) return null;
+    const list = sortBy === 'qty' ? agg.byQty : agg.byRevenue;
+    const topItems = list.slice(0, limit);
+
+    return (
+      <div style={{ marginTop: 32 }}>
+        {agg.topByQty && (
+          <div>
+            <div style={S.secTitle}>Лидеры продаж</div>
+            <div style={S.lead}>
+              <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего штук</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
+                <div style={{ fontSize: 18 }}>{agg.topByQty.name}</div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{agg.topByQty.qty} шт</div>
+                  <div style={S.sub}>{money(agg.topByQty.revenue)}</div>
+                </div>
+              </div>
+            </div>
+            <div style={{ ...S.lead, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
+              <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего выручки</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
+                <div style={{ fontSize: 18 }}>{agg.topByRevenue.name}</div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{money(agg.topByRevenue.revenue)}</div>
+                  <div style={S.sub}>{agg.topByRevenue.qty} шт</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 28 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ ...S.secTitle, marginBottom: 0 }}>Топ {limit} товаров</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => setSortBy('revenue')} style={{ ...S.chip(sortBy === 'revenue'), padding: '8px 12px', fontSize: 14 }}>₽</button>
+              <button onClick={() => setSortBy('qty')} style={{ ...S.chip(sortBy === 'qty'), padding: '8px 12px', fontSize: 14 }}>шт</button>
+            </div>
+          </div>
+          {topItems.map((p, i) => (
+            <div key={i} style={S.row}>
+              <div style={{ paddingRight: 16, display: 'flex', gap: 10 }}>
+                <span style={{ color: '#8B887E', minWidth: 20 }}>{i + 1}.</span>
+                <span>{p.name}</span>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={S.value}>{sortBy === 'qty' ? `${p.qty} шт` : money(p.revenue)}</div>
+                <div style={S.sub}>{sortBy === 'qty' ? money(p.revenue) : `${p.qty} шт`}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   /* ---------- экран: ПРОДАЖИ ---------- */
 
   const buildChartBars = (st) => {
@@ -562,15 +674,6 @@ function App() {
       tick: hhmm(r.date)
     }));
   };
-
-  const Cell = ({ label, value }) => (
-    <div>
-      <div style={{ fontSize: 13, color: '#6E6B62', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 17, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{value}</div>
-    </div>
-  );
-
-  /* --- компактная сводка: два магазина на одном экране --- */
 
   const renderSalesOverview = () => (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -645,14 +748,11 @@ function App() {
     </div>
   );
 
-  /* --- подробности по одному магазину --- */
-
   const renderSalesDetail = () => {
     const k = detailShop;
     const st = salesState[k] || { s: 'idle' };
     const d = st.agg;
     const chartBars = buildChartBars(st);
-    const list = d ? (sortBy === 'qty' ? d.byQty : d.byRevenue) : [];
 
     return (
       <div style={S.scroll}>
@@ -685,54 +785,8 @@ function App() {
                 </div>
               </div>
 
-              {d.topByQty && (
-                <div style={{ marginTop: 32 }}>
-                  <div style={S.secTitle}>Лидеры</div>
-
-                  <div style={S.lead}>
-                    <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего штук</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
-                      <div style={{ fontSize: 18 }}>{d.topByQty.name}</div>
-                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{d.topByQty.qty} шт</div>
-                        <div style={S.sub}>{money(d.topByQty.revenue)}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ ...S.lead, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
-                    <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего выручки</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
-                      <div style={{ fontSize: 18 }}>{d.topByRevenue.name}</div>
-                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{money(d.topByRevenue.revenue)}</div>
-                        <div style={S.sub}>{d.topByRevenue.qty} шт</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {list.length > 0 && (
-                <div style={{ marginTop: 32 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                    <div style={{ ...S.secTitle, marginBottom: 0 }}>Все товары</div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => setSortBy('revenue')} style={{ ...S.chip(sortBy === 'revenue'), padding: '8px 12px', fontSize: 14 }}>₽</button>
-                      <button onClick={() => setSortBy('qty')} style={{ ...S.chip(sortBy === 'qty'), padding: '8px 12px', fontSize: 14 }}>шт</button>
-                    </div>
-                  </div>
-                  {list.slice(0, 20).map((p, i) => (
-                    <div key={i} style={S.row}>
-                      <div style={{ paddingRight: 16 }}>{p.name}</div>
-                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <div style={S.value}>{sortBy === 'qty' ? `${p.qty} шт` : money(p.revenue)}</div>
-                        <div style={S.sub}>{sortBy === 'qty' ? money(p.revenue) : `${p.qty} шт`}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* Топ 5 в Дне */}
+              <ProductsSection agg={d} limit={5} />
             </>
           )}
         </div>
@@ -741,6 +795,30 @@ function App() {
   };
 
   const renderSales = () => detailShop ? renderSalesDetail() : renderSalesOverview();
+
+  /* ---------- Общий рендер деталей товаров для Недели / Месяца / Года ---------- */
+  const renderRangeProductBlock = () => {
+    if (!showRangeDetail) {
+      return (
+        <button onClick={() => setShowRangeDetail(true)}
+          style={{ ...S.chip(false), width: '100%', marginTop: 24, textAlign: 'center', padding: '14px' }}>
+          Подробнее по товарам (Топ {range.limit}) →
+        </button>
+      );
+    }
+
+    return (
+      <div style={{ marginTop: 28, borderTop: '1px solid rgba(23,21,15,0.12)', paddingTop: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: 16, fontWeight: 500 }}>Товары за период</div>
+          <button onClick={() => setShowRangeDetail(false)} style={{ background: 'none', border: 0, color: '#6E6B62', fontSize: 14, cursor: 'pointer' }}>Скрыть</button>
+        </div>
+        {rangeItemsState.s === 'loading' && <div style={{ padding: '16px 0', color: '#6E6B62' }}>Загружаю детализацию товаров…</div>}
+        {rangeItemsState.s === 'error' && <div style={{ padding: '16px 0', color: '#17150F' }}>{rangeItemsState.msg}</div>}
+        {rangeItemsState.s === 'ok' && <ProductsSection agg={rangeItemsState.agg} limit={range.limit} />}
+      </div>
+    );
+  };
 
   /* ---------- экраны: НЕДЕЛЯ / МЕСЯЦ / ГОД ---------- */
 
@@ -762,6 +840,8 @@ function App() {
                   <span style={S.label}>Лучший день</span><span style={S.value}>{money(rangeTotals.best)}</span>
                 </div>
               </div>
+
+              {renderRangeProductBlock()}
             </>
           )}
         </div>
@@ -816,6 +896,8 @@ function App() {
                     </div>
                   </div>
                 )}
+
+                {renderRangeProductBlock()}
               </>
             )}
           </div>
@@ -847,14 +929,14 @@ function App() {
                   <span style={S.value}>{money(Math.max(0, ...bars.map(b => b.value)))}</span>
                 </div>
               </div>
+
+              {renderRangeProductBlock()}
             </>
           )}
         </div>
       </div>
     </>
   );
-
-  /* ---------- рендер ---------- */
 
   const NAV = [
     { id: 'sales', label: 'Продажи' },
@@ -867,7 +949,13 @@ function App() {
     <div style={S.page}>
       <div style={S.header}>
         <div style={S.hTitle}>Продажи{demoMode ? ' · демо' : ''}</div>
-        <button style={S.hBtn} onClick={() => { setTempTokens(tokens); setTempDemo(demoMode); setSettingsOpen(true); }}>Настройки</button>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+          <button style={S.hBtn} onClick={handleRefresh} title="Обновить данные">
+            <span className={isManualRefreshing ? 'spinning' : ''} style={{ fontSize: 17 }}>↻</span>
+            <span>Обновить</span>
+          </button>
+          <button style={S.hBtn} onClick={() => { setTempTokens(tokens); setTempDemo(demoMode); setSettingsOpen(true); }}>Настройки</button>
+        </div>
       </div>
 
       {screen === 'sales' && renderSales()}
@@ -912,8 +1000,7 @@ function App() {
               Демо-режим {tempDemo ? 'включён' : 'выключен'}
             </button>
             <p style={{ fontSize: 14, color: '#4A473F', lineHeight: 1.6, margin: '16px 0 26px' }}>
-              Токен: личный кабинет Яндекс ОФД → Интеграции → API. Хранится только на этом телефоне.
-              В демо-режиме показываются выдуманные цифры — для проверки внешнего вида.
+              Токен: личный кабинет Яндекс ОФД → Интеграции → API. Хранится только на этом устройстве.
             </p>
 
             <button onClick={saveSettings} style={{ width: '100%', padding: 17, background: '#17150F', color: '#F7F6F3', border: 0, fontSize: 17, cursor: 'pointer', marginBottom: 10 }}>Сохранить</button>
