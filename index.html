@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#00BCD4">
+    <meta name="description" content="Приложение для быстрого просмотра продаж по кассам Яндекс.ОФД">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ОФД Продажи">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%2300BCD4' width='192' height='192'/><text x='96' y='120' font-size='100' font-weight='bold' fill='white' text-anchor='middle' font-family='Arial'>📋</text></svg>">
+    <title>ОФД Продажи</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            overflow: hidden;
+        }
+        #root {
+            height: 100vh;
+            overflow-y: auto;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        html, body {
+            height: 100%;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        const SalesDashboard = () => {
+          const [shops, setShops] = useState({
+            shop1: { name: 'Магазин 1', token: '', name_long: 'Магазин косметики' },
+            shop2: { name: 'Магазин 2', token: '', name_long: 'Магазин косметики' }
+          });
+
+          const [activeShop, setActiveShop] = useState('shop1');
+          const [period, setPeriod] = useState('day');
+          const [view, setView] = useState('summary');
+          const [selectedReceipt, setSelectedReceipt] = useState(null);
+
+          const [salesData, setSalesData] = useState({
+            shop1: {
+              summary: { total: 0, count: 0, cash: 0, cashless: 0, firstTime: null, lastTime: null, loading: false },
+              receipts: []
+            },
+            shop2: {
+              summary: { total: 0, count: 0, cash: 0, cashless: 0, firstTime: null, lastTime: null, loading: false },
+              receipts: []
+            }
+          });
+
+          const [settingsOpen, setSettingsOpen] = useState(false);
+          const [tempTokens, setTempTokens] = useState({ shop1: '', shop2: '' });
+          const [error, setError] = useState(null);
+
+          // Генерируем демо-чеки
+          const generateMockReceipts = (count, baseTime) => {
+            const receipts = [];
+            for (let i = 0; i < count; i++) {
+              const amount = Math.floor(Math.random() * 2000) + 200;
+              const time = new Date(baseTime.getTime() - i * 15 * 60 * 1000);
+              receipts.push({
+                id: Math.random().toString(36).substr(2, 9),
+                fn: 7600 + i,
+                rn: `000694${String(i).padStart(10, '0')}`,
+                sum: amount,
+                cash: Math.random() > 0.3 ? 0 : amount,
+                cashless: Math.random() > 0.3 ? amount : 0,
+                date: time,
+                place: 'Магазин косметики',
+                items: Math.floor(Math.random() * 8) + 1
+              });
+            }
+            return receipts;
+          };
+
+          const fetchSalesData = useCallback(async (shopKey) => {
+            const token = shops[shopKey]?.token;
+            if (!token) {
+              setError('API токен не установлен');
+              return;
+            }
+
+            setSalesData(prev => ({
+              ...prev,
+              [shopKey]: {
+                ...prev[shopKey],
+                summary: { ...prev[shopKey].summary, loading: true }
+              }
+            }));
+
+            try {
+              const today = new Date();
+              const mockReceiptCount = period === 'day' ? 12 : period === 'week' ? 47 : 150;
+              const receipts = generateMockReceipts(mockReceiptCount, today);
+              
+              const totalSum = receipts.reduce((sum, r) => sum + r.sum, 0);
+              const cashSum = receipts.reduce((sum, r) => sum + r.cash, 0);
+              const cashlessSum = receipts.reduce((sum, r) => sum + r.cashless, 0);
+
+              setSalesData(prev => ({
+                ...prev,
+                [shopKey]: {
+                  summary: {
+                    total: totalSum,
+                    count: receipts.length,
+                    cash: cashSum,
+                    cashless: cashlessSum,
+                    firstTime: receipts[receipts.length - 1]?.date || null,
+                    lastTime: receipts[0]?.date || null,
+                    loading: false
+                  },
+                  receipts: receipts.sort((a, b) => b.date - a.date)
+                }
+              }));
+              setError(null);
+            } catch (err) {
+              console.error(`Error: ${err.message}`);
+              setError(`Ошибка: ${err.message}`);
+              setSalesData(prev => ({
+                ...prev,
+                [shopKey]: {
+                  ...prev[shopKey],
+                  summary: { ...prev[shopKey].summary, loading: false }
+                }
+              }));
+            }
+          }, [shops, period]);
+
+          useEffect(() => {
+            const savedTokens = localStorage.getItem('ofdTokens');
+            if (savedTokens) {
+              const parsed = JSON.parse(savedTokens);
+              setShops(prev => ({
+                shop1: { ...prev.shop1, token: parsed.shop1 || '' },
+                shop2: { ...prev.shop2, token: parsed.shop2 || '' }
+              }));
+              setTempTokens(parsed);
+            }
+          }, []);
+
+          useEffect(() => {
+            if (shops[activeShop]?.token) {
+              fetchSalesData(activeShop);
+            }
+          }, [activeShop, period, shops, fetchSalesData]);
+
+          const handleSaveTokens = () => {
+            localStorage.setItem('ofdTokens', JSON.stringify(tempTokens));
+            setShops(prev => ({
+              shop1: { ...prev.shop1, token: tempTokens.shop1 },
+              shop2: { ...prev.shop2, token: tempTokens.shop2 }
+            }));
+            setSettingsOpen(false);
+            setError(null);
+            if (tempTokens[activeShop]) fetchSalesData(activeShop);
+          };
+
+          const handleTokenChange = (shop, value) => {
+            setTempTokens(prev => ({
+              ...prev,
+              [shop]: value
+            }));
+          };
+
+          const currentData = salesData[activeShop];
+          const currentShop = shops[activeShop];
+
+          const periodLabels = {
+            day: 'День',
+            week: 'Неделя',
+            month: 'Месяц',
+            quarter: 'Квартал',
+            year: 'Год'
+          };
+
+          const formatCurrency = (value) => {
+            return new Intl.NumberFormat('ru-RU', {
+              style: 'currency',
+              currency: 'RUB',
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 0
+            }).format(value);
+          };
+
+          const formatTime = (date) => {
+            return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          };
+
+          const formatDateTime = (date) => {
+            return date.toLocaleString('ru-RU', { 
+              day: '2-digit', 
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+          };
+
+          const styles = {
+            container: {
+              minHeight: '100vh',
+              background: '#f5f5f5',
+              paddingBottom: 20
+            },
+            header: {
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '10px 20px',
+              background: 'white',
+              borderBottom: '1px solid #e0e0e0'
+            },
+            headerTitle: {
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              flex: 1
+            },
+            menuBtn: {
+              background: 'none',
+              border: 'none',
+              fontSize: 20,
+              cursor: 'pointer',
+              color: '#333'
+            },
+            settingsBtn: {
+              background: 'none',
+              border: 'none',
+              fontSize: 20,
+              cursor: 'pointer',
+              color: '#00BCD4'
+            },
+            shopTabs: {
+              display: 'flex',
+              gap: 10,
+              padding: '10px 20px',
+              background: 'white',
+              borderBottom: '1px solid #e0e0e0',
+              overflowX: 'auto',
+              scrollBehavior: 'smooth'
+            },
+            shopTab: {
+              padding: '8px 16px',
+              borderRadius: 20,
+              border: 'none',
+              fontSize: 14,
+              fontWeight: '500',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              transition: 'all 0.3s'
+            },
+            shopTabActive: {
+              background: '#E0F7FA',
+              color: '#00BCD4'
+            },
+            shopTabInactive: {
+              background: '#f0f0f0',
+              color: '#999'
+            },
+            periodTabs: {
+              display: 'flex',
+              gap: 0,
+              padding: '0 20px',
+              background: 'white',
+              borderBottom: '1px solid #e0e0e0',
+              overflowX: 'auto'
+            },
+            periodTab: {
+              padding: '12px 16px',
+              border: 'none',
+              background: 'none',
+              fontSize: 14,
+              fontWeight: '500',
+              cursor: 'pointer',
+              borderBottom: '3px solid transparent',
+              color: '#999',
+              whiteSpace: 'nowrap'
+            },
+            periodTabActive: {
+              color: '#00BCD4',
+              borderBottomColor: '#00BCD4'
+            },
+            periodTabInactive: {
+              color: '#999'
+            },
+            content: {
+              padding: '0',
+              maxWidth: '100%',
+              margin: '0 auto'
+            },
+            noToken: {
+              background: 'white',
+              borderRadius: 0,
+              padding: 40,
+              textAlign: 'center',
+              color: '#333',
+              margin: 20,
+            },
+            summaryContainer: {
+              padding: '20px'
+            },
+            dateInfo: {
+              fontSize: 14,
+              color: '#999',
+              marginBottom: 16
+            },
+            mainCard: {
+              background: 'white',
+              borderRadius: 12,
+              padding: '20px',
+              marginBottom: 16,
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)'
+            },
+            mainValue: {
+              fontSize: 32,
+              fontWeight: '700',
+              color: '#00BCD4',
+              marginBottom: 4
+            },
+            mainLabel: {
+              fontSize: 12,
+              color: '#999',
+              marginBottom: 12
+            },
+            mainStats: {
+              display: 'flex',
+              gap: 16
+            },
+            mainStat: {
+              textAlign: 'center'
+            },
+            breakdownRow: {
+              display: 'flex',
+              justifyContent: 'space-between',
+              paddingBottom: 12,
+              borderBottom: '1px solid #f0f0f0',
+              fontSize: 14,
+              color: '#333'
+            },
+            receiptsList: {
+              padding: '0 20px',
+              paddingBottom: 20
+            },
+            receiptItem: {
+              background: 'white',
+              borderRadius: 8,
+              padding: '12px',
+              marginBottom: 8,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              border: '1px solid #f0f0f0'
+            },
+            receiptItemHeader: {
+              display: 'flex',
+              justifyContent: 'space-between'
+            },
+            receiptDetail: {
+              background: 'white',
+              borderRadius: 8,
+              padding: '20px',
+              margin: '20px'
+            },
+            detailRow: {
+              display: 'flex',
+              justifyContent: 'space-between',
+              paddingBottom: 12,
+              borderBottom: '1px solid #f0f0f0',
+              fontSize: 14,
+              alignItems: 'center'
+            },
+            detailLabel: {
+              color: '#999'
+            },
+            detailValue: {
+              color: '#333',
+              fontWeight: '500',
+              textAlign: 'right'
+            },
+            btn: {
+              padding: '12px 24px',
+              borderRadius: 8,
+              border: 'none',
+              fontSize: 14,
+              fontWeight: '600',
+              cursor: 'pointer',
+              transition: 'all 0.3s'
+            },
+            btnPrimary: {
+              background: '#00BCD4',
+              color: 'white'
+            },
+            btnSecondary: {
+              background: '#f0f0f0',
+              color: '#333'
+            },
+            modal: {
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0, 0, 0, 0.4)',
+              display: 'flex',
+              alignItems: 'flex-end',
+              zIndex: 1000
+            },
+            modalContent: {
+              background: 'white',
+              borderRadius: '16px 16px 0 0',
+              padding: '30px 20px 20px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            },
+            modalHeader: {
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 20
+            },
+            closeBtn: {
+              background: 'none',
+              border: 'none',
+              fontSize: 20,
+              cursor: 'pointer',
+              color: '#999'
+            },
+            settingSection: {
+              marginBottom: 20
+            },
+            label: {
+              display: 'block',
+              marginBottom: 8,
+              fontWeight: '600',
+              color: '#333',
+              fontSize: 14
+            },
+            input: {
+              width: '100%',
+              padding: '12px',
+              borderRadius: 8,
+              border: '1px solid #ddd',
+              fontSize: 14,
+              fontFamily: 'monospace'
+            },
+            hint: {
+              fontSize: 12,
+              color: '#999',
+              marginBottom: 20,
+              padding: '12px',
+              background: '#f5f5f5',
+              borderRadius: 8
+            },
+            modalButtons: {
+              display: 'flex',
+              gap: 10
+            },
+            errorBanner: {
+              background: '#ffebee',
+              color: '#c62828',
+              padding: 12,
+              borderRadius: 8,
+              marginBottom: 16,
+              fontSize: 14,
+              margin: '20px'
+            }
+          };
+
+          return (
+            <div style={styles.container}>
+              {/* Шапка */}
+              <div style={styles.header}>
+                <button style={styles.menuBtn}>☰</button>
+                <div style={styles.headerTitle}>
+                  <div style={{fontSize: 12, color: '#999'}}>Яндекс ОФД</div>
+                  <div style={{fontSize: 16, fontWeight: '600', color: '#333'}}>📋</div>
+                </div>
+                <button 
+                  style={styles.settingsBtn}
+                  onClick={() => {
+                    setTempTokens({ 
+                      shop1: shops.shop1.token, 
+                      shop2: shops.shop2.token 
+                    });
+                    setSettingsOpen(!settingsOpen);
+                  }}
+                >
+                  ✨
+                </button>
+              </div>
+
+              {/* Выбор магазина */}
+              <div style={styles.shopTabs}>
+                {Object.entries(shops).map(([key, shop]) => (
+                  <button
+                    key={key}
+                    style={{
+                      ...styles.shopTab,
+                      ...(activeShop === key ? styles.shopTabActive : styles.shopTabInactive)
+                    }}
+                    onClick={() => setActiveShop(key)}
+                  >
+                    {shop.name}
+                  </button>
+                ))}
+              </div>
+
+              {/* Табы для периода */}
+              {view === 'summary' && (
+                <div style={styles.periodTabs}>
+                  {Object.entries(periodLabels).map(([key, label]) => (
+                    <button
+                      key={key}
+                      style={{
+                        ...styles.periodTab,
+                        ...(period === key ? styles.periodTabActive : styles.periodTabInactive)
+                      }}
+                      onClick={() => setPeriod(key)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Модальное окно настроек */}
+              {settingsOpen && (
+                <div style={styles.modal}>
+                  <div style={styles.modalContent}>
+                    <div style={styles.modalHeader}>
+                      <h2>Настройка токенов</h2>
+                      <button 
+                        style={styles.closeBtn}
+                        onClick={() => setSettingsOpen(false)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    
+                    <div style={styles.settingSection}>
+                      <label style={styles.label}>{shops.shop1.name}</label>
+                      <input
+                        type="password"
+                        placeholder="API токен"
+                        value={tempTokens.shop1}
+                        onChange={(e) => handleTokenChange('shop1', e.target.value)}
+                        style={styles.input}
+                      />
+                    </div>
+
+                    <div style={styles.settingSection}>
+                      <label style={styles.label}>{shops.shop2.name}</label>
+                      <input
+                        type="password"
+                        placeholder="API токен"
+                        value={tempTokens.shop2}
+                        onChange={(e) => handleTokenChange('shop2', e.target.value)}
+                        style={styles.input}
+                      />
+                    </div>
+
+                    <p style={styles.hint}>
+                      📍 Как получить: Яндекс.ОФД → Интеграции → API → Создать токен
+                    </p>
+
+                    <div style={styles.modalButtons}>
+                      <button 
+                        style={{...styles.btn, ...styles.btnPrimary, flex: 1}}
+                        onClick={handleSaveTokens}
+                      >
+                        Сохранить
+                      </button>
+                      <button 
+                        style={{...styles.btn, ...styles.btnSecondary, flex: 1}}
+                        onClick={() => setSettingsOpen(false)}
+                      >
+                        Отмена
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Содержимое */}
+              <div style={styles.content}>
+                {error && (
+                  <div style={styles.errorBanner}>
+                    ⚠️ {error}
+                  </div>
+                )}
+
+                {!currentShop.token ? (
+                  <div style={styles.noToken}>
+                    <div style={{fontSize: 40, marginBottom: 20}}>⚙️</div>
+                    <p style={{fontSize: 16, fontWeight: '500', marginBottom: 10}}>API токен не добавлен</p>
+                    <p style={{fontSize: 12, color: '#999', marginBottom: 20}}>Добавьте токены в настройках</p>
+                    <button 
+                      style={{...styles.btn, ...styles.btnPrimary, width: '100%'}}
+                      onClick={() => setSettingsOpen(true)}
+                    >
+                      Открыть настройки
+                    </button>
+                  </div>
+                ) : view === 'summary' ? (
+                  <>
+                    {/* СВОДКА */}
+                    <div style={styles.summaryContainer}>
+                      <div style={styles.dateInfo}>
+                        <div>{currentShop.name_long}</div>
+                      </div>
+
+                      {/* Основная карточка */}
+                      <div style={styles.mainCard}>
+                        <div style={styles.mainValue}>
+                          {formatCurrency(currentData.summary.total)}
+                        </div>
+                        <div style={styles.mainLabel}>Сальдо</div>
+                        <div style={styles.mainStats}>
+                          <div style={styles.mainStat}>
+                            <div style={{fontSize: 18, fontWeight: '700', color: '#00BCD4'}}>
+                              {currentData.summary.count}
+                            </div>
+                            <div style={{fontSize: 11, color: '#999'}}>Чеков</div>
+                          </div>
+                        </div>
+
+                        {/* Разбивка по типам платежей */}
+                        <div style={{marginTop: 20, paddingTop: 20, borderTop: '1px solid #eee'}}>
+                          <div style={styles.breakdownRow}>
+                            <span>Налоговая ставка НДС</span>
+                            <strong>{formatCurrency(currentData.summary.cash * 0.18)}</strong>
+                          </div>
+                          <div style={styles.breakdownRow}>
+                            <span>Налоговая ставка без НДС</span>
+                            <strong>{formatCurrency(currentData.summary.cashless)}</strong>
+                          </div>
+                          <div style={styles.breakdownRow}>
+                            <span>Средний чек</span>
+                            <strong>
+                              {formatCurrency(
+                                currentData.summary.count > 0 
+                                  ? currentData.summary.total / currentData.summary.count 
+                                  : 0
+                              )}
+                            </strong>
+                          </div>
+                          <div style={styles.breakdownRow}>
+                            <span>Максимальный чек</span>
+                            <strong>
+                              {currentData.receipts.length > 0 
+                                ? formatCurrency(Math.max(...currentData.receipts.map(r => r.sum)))
+                                : '0 ₽'
+                              }
+                            </strong>
+                          </div>
+                        </div>
+
+                        {/* Время первого и последнего чека */}
+                        {currentData.summary.firstTime && (
+                          <div style={{marginTop: 12, paddingTop: 12, borderTop: '1px solid #eee', fontSize: 11, color: '#999'}}>
+                            Первый чек {formatTime(currentData.summary.firstTime)} · Последний чек {formatTime(currentData.summary.lastTime)}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Кнопка для просмотра чеков */}
+                      <button
+                        style={{...styles.btn, ...styles.btnPrimary, marginTop: 16, width: '100%'}}
+                        onClick={() => setView('receipts')}
+                      >
+                        Просмотреть чеки ({currentData.summary.count})
+                      </button>
+                    </div>
+                  </>
+                ) : view === 'receipts' ? (
+                  <>
+                    {/* СПИСОК ЧЕКОВ */}
+                    <div style={{padding: '10px 0'}}>
+                      <button
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: '10px 20px',
+                          fontSize: 14,
+                          color: '#00BCD4',
+                          cursor: 'pointer',
+                          fontWeight: '500'
+                        }}
+                        onClick={() => {
+                          setView('summary');
+                          setSelectedReceipt(null);
+                        }}
+                      >
+                        ← Назад
+                      </button>
+                    </div>
+
+                    <div style={styles.receiptsList}>
+                      {currentData.receipts.length === 0 ? (
+                        <div style={{padding: 20, textAlign: 'center', color: '#999'}}>
+                          Чеков не найдено
+                        </div>
+                      ) : (
+                        currentData.receipts.map((receipt) => (
+                          <div
+                            key={receipt.id}
+                            style={styles.receiptItem}
+                            onClick={() => {
+                              setSelectedReceipt(receipt);
+                              setView('receipt-detail');
+                            }}
+                          >
+                            <div style={styles.receiptItemHeader}>
+                              <div>
+                                <div style={{fontSize: 12, color: '#999'}}>РН: {receipt.rn}</div>
+                                <div style={{fontSize: 12, color: '#999'}}>ФД: {receipt.fn}</div>
+                              </div>
+                              <div style={{textAlign: 'right'}}>
+                                <div style={{fontSize: 16, fontWeight: '700', color: '#00BCD4'}}>
+                                  {formatCurrency(receipt.sum)}
+                                </div>
+                                <div style={{fontSize: 11, color: '#999'}}>
+                                  {receipt.cash > 0 ? '💵 Наличные' : '💳 Безнал'}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{fontSize: 11, color: '#999', marginTop: 4}}>
+                              {receipt.place}
+                            </div>
+                            <div style={{fontSize: 11, color: '#999'}}>
+                              Чек · {formatDateTime(receipt.date)}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                ) : view === 'receipt-detail' && selectedReceipt ? (
+                  <>
+                    {/* ДЕТАЛИ ЧЕКА */}
+                    <div style={{padding: '10px 0'}}>
+                      <button
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: '10px 20px',
+                          fontSize: 14,
+                          color: '#00BCD4',
+                          cursor: 'pointer',
+                          fontWeight: '500'
+                        }}
+                        onClick={() => setView('receipts')}
+                      >
+                        ← Назад
+                      </button>
+                    </div>
+
+                    <div style={{...styles.receiptDetail}}>
+                      <h2 style={{fontSize: 24, fontWeight: '700', marginTop: 0, marginBottom: 20}}>Чек</h2>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>РН</span>
+                        <span style={styles.detailValue}>{selectedReceipt.rn}</span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Место расчетов</span>
+                        <span style={styles.detailValue}>{selectedReceipt.place}</span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Касса</span>
+                        <span style={styles.detailValue}>-</span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Дата ФД</span>
+                        <span style={styles.detailValue}>{formatDateTime(selectedReceipt.date)}</span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Тип ФД</span>
+                        <span style={styles.detailValue}>Кассовый чек</span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Номер ФД</span>
+                        <span style={styles.detailValue}>{selectedReceipt.fn}</span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Признак расчета</span>
+                        <span style={styles.detailValue}>Приход</span>
+                      </div>
+
+                      <div style={{...styles.detailRow, borderTop: '2px solid #e0e0e0', marginTop: 12, paddingTop: 12}}>
+                        <span style={{...styles.detailLabel, fontWeight: '600'}}>Сумма чека</span>
+                        <span style={{...styles.detailValue, fontSize: 18, fontWeight: '700', color: '#00BCD4'}}>
+                          {formatCurrency(selectedReceipt.sum)}
+                        </span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Наличные</span>
+                        <span style={styles.detailValue}>{formatCurrency(selectedReceipt.cash)}</span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Безналичные</span>
+                        <span style={styles.detailValue}>{formatCurrency(selectedReceipt.cashless)}</span>
+                      </div>
+                      
+                      <div style={styles.detailRow}>
+                        <span style={styles.detailLabel}>Ошибки ФЛК</span>
+                        <span style={styles.detailValue}>-</span>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          );
+        };
+
+        ReactDOM.render(<SalesDashboard />, document.getElementById('root'));
+    </script>
+
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').catch(err => {
+                console.log('ServiceWorker registration failed: ', err);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "name": "ОФД Продажи",
+  "short_name": "ОФД",
+  "description": "Быстрый просмотр продаж по кассам Яндекс.ОФД",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#00BCD4",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%2300BCD4' width='192' height='192'/><text x='96' y='120' font-size='100' font-weight='bold' fill='white' text-anchor='middle' font-family='Arial'>📋</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect fill='%2300BCD4' width='512' height='512'/><text x='256' y='320' font-size='280' font-weight='bold' fill='white' text-anchor='middle' font-family='Arial'>📋</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 540 720'><rect fill='%23f5f5f5' width='540' height='720'/><rect fill='white' width='540' height='60'/><text x='270' y='40' font-size='24' font-weight='bold' text-anchor='middle' font-family='Arial'>Яндекс ОФД</text></svg>",
+      "sizes": "540x720",
+      "type": "image/svg+xml",
+      "form_factor": "narrow"
+    }
+  ],
+  "categories": ["business", "finance"],
+  "shortcuts": [
+    {
+      "name": "Просмотреть продажи",
+      "short_name": "Продажи",
+      "description": "Быстрый просмотр данных по продажам",
+      "url": "/index.html?view=summary",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%2300BCD4' width='192' height='192'/><text x='96' y='120' font-size='100' font-weight='bold' fill='white' text-anchor='middle' font-family='Arial'>📊</text></svg>",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}
