@@ -279,7 +279,6 @@ function Chart({ data, height = 90 }) {
    ============================================================ */
 
 function App() {
-  const [now, setNow] = useState(new Date());
   const [screen, setScreen] = useState('sales');
   const [activeShop, setActiveShop] = useState('shop1');
 
@@ -310,8 +309,7 @@ function App() {
   const [prevYearSum, setPrevYearSum] = useState(null);
   const reqId = useRef(0);
   const cache = useRef(new Map());
-
-  useEffect(() => { const id = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(id); }, []);
+  const lastFetchTime = useRef(0);
 
   useEffect(() => {
     try {
@@ -332,20 +330,26 @@ function App() {
 
   const loadReceipts = useCallback(async (k, from, to, force = false) => {
     const key = `${k}|${demoMode ? 'demo' : 'live'}|${from}|${to}`;
-    const touchesToday = to >= ymd(now);
+    const todayStr = ymd(new Date());
+    const touchesToday = to >= todayStr;
     const hit = cache.current.get(key);
-    if (!force && hit && (!touchesToday || Date.now() - hit.at < 90000)) return hit.data;
+    
+    // Кэш: 2 минуты для сегодня, бессрочно для архивных дат
+    if (!force && hit && (!touchesToday || Date.now() - hit.at < 120000)) {
+      return hit.data;
+    }
 
     const data = (demoMode || !tokens[k])
-      ? demoReceiptsRange(k, new Date(from + 'T00:00:00'), new Date(to + 'T00:00:00'), now)
+      ? demoReceiptsRange(k, new Date(from + 'T00:00:00'), new Date(to + 'T00:00:00'), new Date())
       : await apiReceipts(tokens[k], from, to);
 
     cache.current.set(key, { at: Date.now(), data });
     return data;
-  }, [demoMode, tokens, now]);
+  }, [demoMode, tokens]);
 
   const loadSales = useCallback(async (force = false) => {
     const my = ++reqId.current;
+    const todayNow = new Date();
     const loadShop = async (k) => {
       if (!demoMode && !tokens[k]) { setSalesState(p => ({ ...p, [k]: { s: 'notoken' } })); return; }
       setSalesState(p => ({ ...p, [k]: { s: 'loading' } }));
@@ -361,7 +365,7 @@ function App() {
           receipts = await loadReceipts(k, from, to, force);
           label = `${dmy(new Date(from + 'T00:00:00'))} — ${dmy(new Date(to + 'T00:00:00'))}`;
         } else {
-          const today = ymd(now);
+          const today = ymd(todayNow);
           receipts = await loadReceipts(k, today, today, force);
           let dayKey = today;
           if (!receipts.length) {
@@ -381,7 +385,7 @@ function App() {
           }
           from = to = dayKey;
           const d = new Date(dayKey + 'T00:00:00');
-          const back = daysBetween(d, now);
+          const back = daysBetween(d, todayNow);
           label = back === 0 ? `сегодня, ${longDate(d)}` : back === 1 ? `вчера, ${longDate(d)}` : `${DOW_SHORT[d.getDay()]}, ${longDate(d)}`;
         }
         if (reqId.current !== my) return;
@@ -393,11 +397,13 @@ function App() {
       }
     };
     await Promise.all(Object.keys(SHOPS).map(loadShop));
-  }, [dateMode, pickDay, rangeFrom, rangeTo, now, tokens, demoMode, loadReceipts]);
+    lastFetchTime.current = Date.now();
+  }, [dateMode, pickDay, rangeFrom, rangeTo, tokens, demoMode, loadReceipts]);
 
   const range = useMemo(() => {
+    const todayNow = new Date();
     if (screen === 'week') {
-      const to = startOfDay(now);
+      const to = startOfDay(todayNow);
       const from = new Date(to); from.setDate(to.getDate() - 6);
       return { from, to, kind: 'days', title: 'последние 7 дней', limit: 10 };
     }
@@ -405,7 +411,7 @@ function App() {
       return { from: new Date(year, month, 1), to: new Date(year, month + 1, 0), kind: 'days', title: `${MONTHS[month]} ${year}`, limit: 20 };
     }
     return { from: new Date(chartYear, 0, 1), to: new Date(chartYear, 11, 31), kind: 'months', title: `${chartYear} год`, limit: 50 };
-  }, [screen, now, year, month, chartYear]);
+  }, [screen, year, month, chartYear]);
 
   const loadRange = useCallback(async () => {
     if (screen === 'sales') return;
@@ -415,7 +421,7 @@ function App() {
     setRangeState({ s: 'loading' });
     try {
       const byDay = demoMode || !tokens[k]
-        ? demoDays(k, new Date(range.from), range.to, now)
+        ? demoDays(k, new Date(range.from), range.to, new Date())
         : await apiDays(tokens[k], ymd(range.from), ymd(range.to));
       if (reqId.current !== my) return;
       setRangeState({ s: 'ok', byDay });
@@ -423,7 +429,8 @@ function App() {
       if (reqId.current !== my) return;
       setRangeState({ s: 'error', msg: e.message });
     }
-  }, [screen, activeShop, tokens, demoMode, range, now]);
+    lastFetchTime.current = Date.now();
+  }, [screen, activeShop, tokens, demoMode, range]);
 
   const loadRangeProducts = useCallback(async () => {
     const k = activeShop;
@@ -454,7 +461,6 @@ function App() {
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
     cache.current.clear();
-    setNow(new Date());
     if (screen === 'sales') {
       await loadSales(true);
     } else {
@@ -464,20 +470,16 @@ function App() {
     setTimeout(() => setIsManualRefreshing(false), 500);
   }, [screen, loadSales, loadRange, showRangeDetail, loadRangeProducts]);
 
+  // Обновление при возврате во вкладку только если прошло более 2 минут
   useEffect(() => {
     const onFocus = () => {
-      setNow(new Date());
-      if (screen === 'sales') loadSales();
-      else loadRange();
+      if (Date.now() - lastFetchTime.current > 120000) {
+        if (screen === 'sales') loadSales();
+        else loadRange();
+      }
     };
     window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') onFocus();
-    });
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onFocus);
-    };
+    return () => window.removeEventListener('focus', onFocus);
   }, [screen, loadSales, loadRange]);
 
   useEffect(() => {
@@ -487,12 +489,12 @@ function App() {
       const k = activeShop;
       const from = new Date(year - 1, month, 1), to = new Date(year - 1, month + 1, 0);
       try {
-        const byDay = demoMode || !tokens[k] ? demoDays(k, new Date(from), to, now) : await apiDays(tokens[k], ymd(from), ymd(to));
+        const byDay = demoMode || !tokens[k] ? demoDays(k, new Date(from), to, new Date()) : await apiDays(tokens[k], ymd(from), ymd(to));
         if (!cancelled) setPrevYearSum(Object.values(byDay).reduce((s, d) => s + d.sum, 0));
       } catch (e) { if (!cancelled) setPrevYearSum(null); }
     })();
     return () => { cancelled = true; };
-  }, [screen, compare, activeShop, year, month, tokens, demoMode, now]);
+  }, [screen, compare, activeShop, year, month, tokens, demoMode]);
 
   const bars = useMemo(() => {
     if (rangeState.s !== 'ok') return [];
@@ -626,7 +628,6 @@ function App() {
     </div>
   );
 
-  /* ---------- Товарная аналитика ---------- */
   const ProductsSection = ({ agg, limit = 5 }) => {
     if (!agg || !agg.products || agg.products.length === 0) return null;
     const list = sortBy === 'qty' ? agg.byQty : agg.byRevenue;
@@ -685,8 +686,6 @@ function App() {
     );
   };
 
-  /* ---------- Экран: ПРОДАЖИ ---------- */
-
   const buildChartBars = (st) => {
     if (!st || st.s !== 'ok') return [];
     if (st.spanDays > 1) {
@@ -717,13 +716,13 @@ function App() {
 
       {dateMode === 'day' && (
         <div style={{ padding: '0 20px 10px' }}>
-          <input type="date" value={pickDay} max={ymd(now)} onChange={e => setPickDay(e.target.value)} />
+          <input type="date" value={pickDay} max={ymd(new Date())} onChange={e => setPickDay(e.target.value)} />
         </div>
       )}
       {dateMode === 'range' && (
         <div style={{ padding: '0 20px 10px', display: 'flex', gap: 8 }}>
-          <input type="date" value={rangeFrom} max={ymd(now)} onChange={e => setRangeFrom(e.target.value)} />
-          <input type="date" value={rangeTo} max={ymd(now)} onChange={e => setRangeTo(e.target.value)} />
+          <input type="date" value={rangeFrom} max={ymd(new Date())} onChange={e => setRangeFrom(e.target.value)} />
+          <input type="date" value={rangeTo} max={ymd(new Date())} onChange={e => setRangeTo(e.target.value)} />
         </div>
       )}
 
@@ -768,7 +767,7 @@ function App() {
                         <Cell label="Последний чек" value={hhmm(d.last)} />
                         <Cell label="Наличные" value={money(d.cash)} />
                         <Cell label="Карта" value={money(d.ecash)} />
-                        <Cell label="Крупный чек" value={money(d.max)} />
+                        <Cell label="Самая большая" value={money(d.max)} />
                         <Cell label="Средний чек" value={money(d.avg)} />
                       </div>
                     )}
@@ -851,8 +850,6 @@ function App() {
       </div>
     );
   };
-
-  /* ---------- Экраны: НЕДЕЛЯ / МЕСЯЦ / ГОД ---------- */
 
   const renderWeek = () => (
     <>
