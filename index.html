@@ -283,6 +283,7 @@ function App() {
   const [rangeFrom, setRangeFrom] = useState(ymd(new Date()));
   const [rangeTo, setRangeTo] = useState(ymd(new Date()));
   const [sortBy, setSortBy] = useState('revenue');        // revenue | qty
+  const [detailShop, setDetailShop] = useState(null);     // null | shop1 | shop2
 
   const [month, setMonth] = useState(new Date().getMonth());
   const [year, setYear] = useState(new Date().getFullYear());
@@ -504,143 +505,204 @@ function App() {
 
   /* ---------- экран: ПРОДАЖИ ---------- */
 
-  const renderSales = () => (
-    <div style={S.scroll}>
-      {/* выбор периода */}
-      <div style={{ ...S.block, paddingBottom: 24 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setDateMode('auto')} style={S.chip(dateMode === 'auto')}>Сегодня</button>
-          <button onClick={() => setDateMode('day')} style={S.chip(dateMode === 'day')}>Дата</button>
-          <button onClick={() => setDateMode('range')} style={S.chip(dateMode === 'range')}>Период</button>
-        </div>
+  const buildChartBars = (st) => {
+    if (!st || st.s !== 'ok') return [];
+    if (st.spanDays > 1) {
+      const byDay = {};
+      st.receipts.forEach(r => { const key = ymd(r.date); byDay[key] = (byDay[key] || 0) + r.sum; });
+      const out = [];
+      const cur = new Date(st.from + 'T00:00:00'), end = new Date(st.to + 'T00:00:00');
+      while (cur <= end) {
+        out.push({ value: byDay[ymd(cur)] || 0, label: `${DOW_SHORT[cur.getDay()]}, ${cur.getDate()} ${MONTHS[cur.getMonth()].toLowerCase()}`, tick: dmy(cur) });
+        cur.setDate(cur.getDate() + 1);
+      }
+      return out;
+    }
+    return st.receipts.map(r => ({
+      value: r.sum,
+      label: `Покупка в ${hhmm(r.date)}${r.items.length ? ` · ${r.items.length} ${plural(r.items.length, 'позиция', 'позиции', 'позиций')}` : ''}`,
+      tick: hhmm(r.date)
+    }));
+  };
 
-        {dateMode === 'day' && (
-          <div style={{ marginTop: 20 }}>
-            <div style={S.fieldLabel}>День</div>
-            <input type="date" value={pickDay} max={ymd(now)} onChange={e => setPickDay(e.target.value)} />
-          </div>
-        )}
-
-        {dateMode === 'range' && (
-          <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div style={S.fieldLabel}>От</div>
-              <input type="date" value={rangeFrom} max={ymd(now)} onChange={e => setRangeFrom(e.target.value)} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={S.fieldLabel}>До</div>
-              <input type="date" value={rangeTo} max={ymd(now)} onChange={e => setRangeTo(e.target.value)} />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {Object.keys(SHOPS).map(k => {
-        const st = salesState[k] || { s: 'idle' };
-        const d = st.agg;
-        let chartBars = [];
-        if (st.s === 'ok') {
-          if (st.spanDays > 1) {
-            const byDay = {};
-            st.receipts.forEach(r => { const key = ymd(r.date); byDay[key] = (byDay[key] || 0) + r.sum; });
-            const cur = new Date(st.from + 'T00:00:00'), end = new Date(st.to + 'T00:00:00');
-            while (cur <= end) {
-              chartBars.push({ value: byDay[ymd(cur)] || 0, label: `${DOW_SHORT[cur.getDay()]}, ${cur.getDate()} ${MONTHS[cur.getMonth()].toLowerCase()}`, tick: dmy(cur) });
-              cur.setDate(cur.getDate() + 1);
-            }
-          } else {
-            chartBars = st.receipts.map(r => ({
-              value: r.sum,
-              label: `Покупка в ${hhmm(r.date)}${r.items.length ? ` · ${r.items.length} ${plural(r.items.length, 'позиция', 'позиции', 'позиций')}` : ''}`,
-              tick: hhmm(r.date)
-            }));
-          }
-        }
-        const list = d ? (sortBy === 'qty' ? d.byQty : d.byRevenue) : [];
-
-        return (
-          <div key={k} style={S.block}>
-            <div style={S.secTitle}>{SHOPS[k].name}</div>
-
-            {st.s !== 'ok' ? <Status st={st} retry={loadSales} /> : (
-              <>
-                <div style={S.big}>{money(d.total)}</div>
-                <div style={S.caption}>
-                  {st.label} · {d.count === 0 ? 'продаж не было' : `${d.count} ${plural(d.count, 'чек', 'чека', 'чеков')}`}
-                </div>
-
-                {d.count > 0 && (
-                  <>
-                    <Chart data={chartBars} />
-
-                    <div style={{ marginTop: 28 }}>
-                      <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(d.avg)}</span></div>
-                      <div style={S.row}><span style={S.label}>Максимальный чек</span><span style={S.value}>{money(d.max)}</span></div>
-                      <div style={S.row}><span style={S.label}>Товаров продано</span><span style={S.value}>{d.unitsTotal} шт</span></div>
-                      <div style={S.row}><span style={S.label}>Последняя продажа</span><span style={S.value}>{hhmm(d.last)}</span></div>
-                      <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
-                        <span style={S.label}>Наличные / карта</span>
-                        <span style={S.value}>{money(d.cash)} / {money(d.ecash)}</span>
-                      </div>
-                    </div>
-
-                    {d.topByQty && (
-                      <div style={{ marginTop: 32 }}>
-                        <div style={S.secTitle}>Лидеры</div>
-
-                        <div style={S.lead}>
-                          <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего штук</div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
-                            <div style={{ fontSize: 18 }}>{d.topByQty.name}</div>
-                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                              <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{d.topByQty.qty} шт</div>
-                              <div style={S.sub}>{money(d.topByQty.revenue)}</div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div style={{ ...S.lead, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
-                          <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего выручки</div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
-                            <div style={{ fontSize: 18 }}>{d.topByRevenue.name}</div>
-                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                              <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{money(d.topByRevenue.revenue)}</div>
-                              <div style={S.sub}>{d.topByRevenue.qty} шт</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {list.length > 0 && (
-                      <div style={{ marginTop: 32 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                          <div style={{ ...S.secTitle, marginBottom: 0 }}>Все товары</div>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button onClick={() => setSortBy('revenue')} style={{ ...S.chip(sortBy === 'revenue'), padding: '8px 12px', fontSize: 14 }}>₽</button>
-                            <button onClick={() => setSortBy('qty')} style={{ ...S.chip(sortBy === 'qty'), padding: '8px 12px', fontSize: 14 }}>шт</button>
-                          </div>
-                        </div>
-                        {list.slice(0, 10).map((p, i) => (
-                          <div key={i} style={S.row}>
-                            <div style={{ paddingRight: 16 }}>{p.name}</div>
-                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                              <div style={S.value}>{sortBy === 'qty' ? `${p.qty} шт` : money(p.revenue)}</div>
-                              <div style={S.sub}>{sortBy === 'qty' ? money(p.revenue) : `${p.qty} шт`}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        );
-      })}
+  const Cell = ({ label, value }) => (
+    <div>
+      <div style={{ fontSize: 13, color: '#6E6B62', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 17, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{value}</div>
     </div>
   );
+
+  /* --- компактная сводка: два магазина на одном экране --- */
+
+  const renderSalesOverview = () => (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ padding: '14px 24px 18px', borderTop: '1px solid rgba(23,21,15,0.12)', display: 'flex', gap: 8 }}>
+        <button onClick={() => setDateMode('auto')} style={{ ...S.chip(dateMode === 'auto'), padding: '10px 14px', fontSize: 15 }}>Сегодня</button>
+        <button onClick={() => setDateMode('day')} style={{ ...S.chip(dateMode === 'day'), padding: '10px 14px', fontSize: 15 }}>Дата</button>
+        <button onClick={() => setDateMode('range')} style={{ ...S.chip(dateMode === 'range'), padding: '10px 14px', fontSize: 15 }}>Период</button>
+      </div>
+
+      {dateMode === 'day' && (
+        <div style={{ padding: '0 24px 18px' }}>
+          <input type="date" value={pickDay} max={ymd(now)} onChange={e => setPickDay(e.target.value)} />
+        </div>
+      )}
+      {dateMode === 'range' && (
+        <div style={{ padding: '0 24px 18px', display: 'flex', gap: 10 }}>
+          <input type="date" value={rangeFrom} max={ymd(now)} onChange={e => setRangeFrom(e.target.value)} />
+          <input type="date" value={rangeTo} max={ymd(now)} onChange={e => setRangeTo(e.target.value)} />
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        {Object.keys(SHOPS).map(k => {
+          const st = salesState[k] || { s: 'idle' };
+          const d = st.agg;
+
+          return (
+            <div key={k}
+              onClick={() => { if (st.s === 'ok' && d.count > 0) setDetailShop(k); }}
+              style={{
+                padding: '20px 24px 22px',
+                borderTop: '1px solid rgba(23,21,15,0.12)',
+                cursor: st.s === 'ok' && d && d.count > 0 ? 'pointer' : 'default'
+              }}>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <div style={{ fontSize: 14, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4A473F', fontWeight: 500 }}>
+                  {SHOPS[k].name}
+                </div>
+                {st.s === 'ok' && d.count > 0 && (
+                  <div style={{ fontSize: 15, color: '#6E6B62' }}>Подробнее →</div>
+                )}
+              </div>
+
+              {st.s !== 'ok' ? (
+                <div style={{ marginTop: 10 }}><Status st={st} retry={loadSales} /></div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 38, lineHeight: 1.1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', marginTop: 10 }}>
+                    {money(d.total)}
+                  </div>
+                  <div style={{ fontSize: 14, color: '#4A473F', marginTop: 6 }}>{st.label}</div>
+
+                  {d.count === 0 ? (
+                    <div style={{ fontSize: 15, color: '#6E6B62', marginTop: 14 }}>продаж не было</div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 16px', marginTop: 18 }}>
+                      <Cell label="Чеков" value={d.count} />
+                      <Cell label="Последний чек" value={hhmm(d.last)} />
+                      <Cell label="Наличные" value={money(d.cash)} />
+                      <Cell label="Карта" value={money(d.ecash)} />
+                      <Cell label="Самая большая" value={money(d.max)} />
+                      <Cell label="Средний чек" value={money(d.avg)} />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  /* --- подробности по одному магазину --- */
+
+  const renderSalesDetail = () => {
+    const k = detailShop;
+    const st = salesState[k] || { s: 'idle' };
+    const d = st.agg;
+    const chartBars = buildChartBars(st);
+    const list = d ? (sortBy === 'qty' ? d.byQty : d.byRevenue) : [];
+
+    return (
+      <div style={S.scroll}>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(23,21,15,0.12)' }}>
+          <button onClick={() => setDetailShop(null)}
+            style={{ background: 'none', border: 0, fontSize: 16, color: '#4A473F', padding: '6px 0', cursor: 'pointer' }}>
+            ← Назад
+          </button>
+        </div>
+
+        <div style={S.block}>
+          <div style={S.secTitle}>{SHOPS[k].name}</div>
+
+          {st.s !== 'ok' ? <Status st={st} retry={loadSales} /> : (
+            <>
+              <div style={S.big}>{money(d.total)}</div>
+              <div style={S.caption}>
+                {st.label} · {d.count} {plural(d.count, 'чек', 'чека', 'чеков')}
+              </div>
+
+              <Chart data={chartBars} />
+
+              <div style={{ marginTop: 28 }}>
+                <div style={S.row}><span style={S.label}>Средний чек</span><span style={S.value}>{money(d.avg)}</span></div>
+                <div style={S.row}><span style={S.label}>Самая большая покупка</span><span style={S.value}>{money(d.max)}</span></div>
+                <div style={S.row}><span style={S.label}>Товаров продано</span><span style={S.value}>{d.unitsTotal} шт</span></div>
+                <div style={S.row}><span style={S.label}>Первая продажа</span><span style={S.value}>{hhmm(d.first)}</span></div>
+                <div style={{ ...S.row, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
+                  <span style={S.label}>Последняя продажа</span><span style={S.value}>{hhmm(d.last)}</span>
+                </div>
+              </div>
+
+              {d.topByQty && (
+                <div style={{ marginTop: 32 }}>
+                  <div style={S.secTitle}>Лидеры</div>
+
+                  <div style={S.lead}>
+                    <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего штук</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
+                      <div style={{ fontSize: 18 }}>{d.topByQty.name}</div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{d.topByQty.qty} шт</div>
+                        <div style={S.sub}>{money(d.topByQty.revenue)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ ...S.lead, borderBottom: '1px solid rgba(23,21,15,0.12)' }}>
+                    <div style={{ fontSize: 14, color: '#6E6B62', marginBottom: 6 }}>Больше всего выручки</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16 }}>
+                      <div style={{ fontSize: 18 }}>{d.topByRevenue.name}</div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{money(d.topByRevenue.revenue)}</div>
+                        <div style={S.sub}>{d.topByRevenue.qty} шт</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {list.length > 0 && (
+                <div style={{ marginTop: 32 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                    <div style={{ ...S.secTitle, marginBottom: 0 }}>Все товары</div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => setSortBy('revenue')} style={{ ...S.chip(sortBy === 'revenue'), padding: '8px 12px', fontSize: 14 }}>₽</button>
+                      <button onClick={() => setSortBy('qty')} style={{ ...S.chip(sortBy === 'qty'), padding: '8px 12px', fontSize: 14 }}>шт</button>
+                    </div>
+                  </div>
+                  {list.slice(0, 20).map((p, i) => (
+                    <div key={i} style={S.row}>
+                      <div style={{ paddingRight: 16 }}>{p.name}</div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <div style={S.value}>{sortBy === 'qty' ? `${p.qty} шт` : money(p.revenue)}</div>
+                        <div style={S.sub}>{sortBy === 'qty' ? money(p.revenue) : `${p.qty} шт`}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSales = () => detailShop ? renderSalesDetail() : renderSalesOverview();
 
   /* ---------- экраны: НЕДЕЛЯ / МЕСЯЦ / ГОД ---------- */
 
@@ -779,7 +841,7 @@ function App() {
         {NAV.map(it => {
           const on = screen === it.id;
           return (
-            <button key={it.id} onClick={() => setScreen(it.id)} style={S.navBtn}>
+            <button key={it.id} onClick={() => { setScreen(it.id); setDetailShop(null); }} style={S.navBtn}>
               <div style={{
                 width: 14, height: 14, borderRadius: '50%',
                 background: on ? '#17150F' : 'transparent',
