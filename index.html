@@ -771,21 +771,7 @@ function App() {
           };
           from = to = today;
           label = mkLabel(today);
-          receipts = await loadReceipts(k, today, today, { force, onStale: rs => { if (rs.length) publish(rs, today, today, label, true); } });
-
-          if (!receipts.length) {
-            // сегодня пусто — ищем последний рабочий день по сменам,
-            // это намного дешевле, чем тянуть чеки за две недели
-            const backFrom = addDaysStr(today, -30);
-            const byDay = await loadDays(k, backFrom, today, { force });
-            const days = Object.keys(byDay).filter(d => (byDay[d].cnt > 0 || byDay[d].sum > 0)).sort();
-            const dayKey = days.length ? days[days.length - 1] : today;
-            if (dayKey !== today) {
-              from = to = dayKey;
-              label = mkLabel(dayKey);
-              receipts = await loadReceipts(k, dayKey, dayKey, { force });
-            }
-          }
+          receipts = await loadReceipts(k, today, today, { force, onStale: rs => publish(rs, today, today, label, true) });
         }
         publish(receipts, from, to, label, false);
       } catch (e) {
